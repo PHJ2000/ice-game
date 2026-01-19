@@ -511,7 +511,7 @@ const joinRoom = (code) => {
   if (!/^[A-Z0-9]{4,6}$/.test(cleaned)) {
     statusText.textContent = "방 코드는 4~6자리 영문/숫자만 가능해요.";
     return;
-  }'
+  }
   roomCode = cleaned;
   roomInput.value = roomCode;
   if (!socket || socket.readyState === WebSocket.CLOSED) {
