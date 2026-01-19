@@ -37,9 +37,14 @@ let roomCode = "";
 let lastSent = 0;
 let lastInputSignature = "";
 let targetState = null;
+let targetStateTime = 0;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
+const smoothTo = (current, target, alpha, deadzone = 0.15) => {
+  if (Math.abs(target - current) <= deadzone) return target;
+  return lerp(current, target, alpha);
+};
 
 const resetRound = (direction = 1) => {
   state.left.x = 140;
@@ -223,6 +228,9 @@ const draw = () => {
 const applyRemoteState = (payload) => {
   if (role === "guest") {
     targetState = payload;
+    targetStateTime = performance.now();
+    state.puck.vx = payload.puck.vx;
+    state.puck.vy = payload.puck.vy;
     state.scores = payload.scores;
     state.running = payload.running;
     state.status = payload.status;
@@ -283,12 +291,13 @@ const loop = (time) => {
   if (role === "guest" && state.running) {
     moveGuestPaddleLocally();
     if (targetState) {
-      state.left.x = lerp(state.left.x, targetState.left.x, 0.25);
-      state.left.y = lerp(state.left.y, targetState.left.y, 0.25);
-      state.puck.x = lerp(state.puck.x, targetState.puck.x, 0.3);
-      state.puck.y = lerp(state.puck.y, targetState.puck.y, 0.3);
-      state.puck.vx = targetState.puck.vx;
-      state.puck.vy = targetState.puck.vy;
+      const since = Math.min((time - targetStateTime) / 1000, 0.15);
+      const predictedX = targetState.puck.x + targetState.puck.vx * since * 60;
+      const predictedY = targetState.puck.y + targetState.puck.vy * since * 60;
+      state.left.x = smoothTo(state.left.x, targetState.left.x, 0.12);
+      state.left.y = smoothTo(state.left.y, targetState.left.y, 0.12);
+      state.puck.x = smoothTo(state.puck.x, predictedX, 0.16);
+      state.puck.y = smoothTo(state.puck.y, predictedY, 0.16);
     }
   }
   draw();
@@ -442,7 +451,7 @@ createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
 joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
 copyLinkBtn.addEventListener("click", copyShareLink);
 
-setInterval(sendInput, 33);
+setInterval(sendInput, 16);
 
 const params = new URLSearchParams(window.location.search);
 const roomParam = params.get("room");
