@@ -36,6 +36,7 @@ let role = null;
 let roomCode = "";
 let lastSent = 0;
 let lastInputSignature = "";
+let targetState = null;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
@@ -220,17 +221,19 @@ const draw = () => {
 };
 
 const applyRemoteState = (payload) => {
-  state.left = { ...state.left, ...payload.left };
   if (role === "guest") {
-    state.right.x = lerp(state.right.x, payload.right.x, 0.6);
-    state.right.y = lerp(state.right.y, payload.right.y, 0.6);
+    targetState = payload;
+    state.scores = payload.scores;
+    state.running = payload.running;
+    state.status = payload.status;
   } else {
+    state.left = { ...state.left, ...payload.left };
     state.right = { ...state.right, ...payload.right };
+    state.puck = { ...state.puck, ...payload.puck };
+    state.scores = payload.scores;
+    state.running = payload.running;
+    state.status = payload.status;
   }
-  state.puck = { ...state.puck, ...payload.puck };
-  state.scores = payload.scores;
-  state.running = payload.running;
-  state.status = payload.status;
   scoreLeftEl.textContent = state.scores.left.toString();
   scoreRightEl.textContent = state.scores.right.toString();
   statusText.textContent = state.status;
@@ -279,6 +282,14 @@ const loop = (time) => {
   }
   if (role === "guest" && state.running) {
     moveGuestPaddleLocally();
+    if (targetState) {
+      state.left.x = lerp(state.left.x, targetState.left.x, 0.25);
+      state.left.y = lerp(state.left.y, targetState.left.y, 0.25);
+      state.puck.x = lerp(state.puck.x, targetState.puck.x, 0.3);
+      state.puck.y = lerp(state.puck.y, targetState.puck.y, 0.3);
+      state.puck.vx = targetState.puck.vx;
+      state.puck.vy = targetState.puck.vy;
+    }
   }
   draw();
   requestAnimationFrame(loop);
