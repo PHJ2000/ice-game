@@ -42,14 +42,10 @@ let targetState = null;
 let targetStateTime = 0;
 let guestPos = null;
 let guestPosTime = 0;
-let guestPosVel = { x: 0, y: 0 };
-let guestBuffer = [];
-let rightRender = null;
+let renderRight = { x: state.right.x, y: state.right.y, r: state.right.r };
 let audioReady = false;
 let audioContext;
 let masterGain;
-let musicTimer = null;
-let musicStep = 0;
 let bgm;
 let lastScoreLeft = 0;
 let lastScoreRight = 0;
@@ -60,23 +56,6 @@ const lerp = (start, end, t) => start + (end - start) * t;
 const smoothTo = (current, target, alpha, deadzone = 0.15) => {
   if (Math.abs(target - current) <= deadzone) return target;
   return lerp(current, target, alpha);
-};
-
-const getGuestRenderPos = () => {
-  if (guestBuffer.length < 2) return null;
-  const renderTime = performance.now() - 80;
-  let older = guestBuffer[0];
-  let newer = guestBuffer[guestBuffer.length - 1];
-  for (let i = guestBuffer.length - 1; i >= 0; i -= 1) {
-    if (guestBuffer[i].time <= renderTime) {
-      older = guestBuffer[i];
-      newer = guestBuffer[i + 1] || guestBuffer[i];
-      break;
-    }
-  }
-  const span = newer.time - older.time || 1;
-  const t = clamp((renderTime - older.time) / span, 0, 1);
-  return { x: lerp(older.x, newer.x, t), y: lerp(older.y, newer.y, t) };
 };
 
 const resetRound = (direction = 1) => {
@@ -118,9 +97,9 @@ const initAudio = () => {
   if (!audioReady) {
     audioReady = true;
     if (!bgm) {
-      bgm = new Audio("assets/bgm.wav");
+      bgm = new Audio("assets/first_light_particles.wav");
       bgm.loop = true;
-      bgm.volume = 0.35;
+      bgm.volume = 0.5;
     }
     bgm.play().catch(() => {});
   }
@@ -139,39 +118,6 @@ const playTone = (frequency, duration = 0.1, volume = 0.2) => {
   osc.stop(audioContext.currentTime + duration);
 };
 
-const playNote = (frequency, duration, volume, type = "triangle") => {
-  if (!audioReady) return;
-  const osc = audioContext.createOscillator();
-  const gain = audioContext.createGain();
-  osc.type = type;
-  osc.frequency.value = frequency;
-  gain.gain.value = volume;
-  osc.connect(gain).connect(masterGain);
-  osc.start();
-  gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + duration);
-  osc.stop(audioContext.currentTime + duration);
-};
-
-const startMusic = () => {
-  if (musicTimer) return;
-  const sequence = [
-    { f: 220.0, d: 0.24, v: 0.08 },
-    { f: 261.63, d: 0.24, v: 0.09 },
-    { f: 329.63, d: 0.24, v: 0.1 },
-    { f: 392.0, d: 0.32, v: 0.1 },
-    { f: 329.63, d: 0.2, v: 0.08 },
-    { f: 261.63, d: 0.2, v: 0.08 },
-    { f: 246.94, d: 0.24, v: 0.09 },
-    { f: 196.0, d: 0.3, v: 0.08 },
-  ];
-
-  musicTimer = setInterval(() => {
-    const note = sequence[musicStep % sequence.length];
-    playNote(note.f, note.d, note.v);
-    musicStep += 1;
-  }, 280);
-};
-
 const playWall = () => playTone(360, 0.08, 0.12);
 const playPaddle = () => playTone(520, 0.09, 0.18);
 const playGoal = () => playTone(220, 0.22, 0.3);
@@ -188,12 +134,8 @@ const movePaddles = () => {
   const now = performance.now();
   const hasFreshGuestPos = guestPos && now - guestPosTime < 120;
   if (hasFreshGuestPos) {
-    const age = Math.max(0, now - guestPosTime);
-    const lead = Math.min(age / 16, 2);
-    const predictedX = guestPos.x + guestPosVel.x * lead;
-    const predictedY = guestPos.y + guestPosVel.y * lead;
-    right.x = clamp(predictedX, canvas.width / 2 + 40, bounds.maxX);
-    right.y = clamp(predictedY, bounds.minY, bounds.maxY);
+    right.x = guestPos.x;
+    right.y = guestPos.y;
   } else {
     if (guestInput.up) right.y -= right.speed;
     if (guestInput.down) right.y += right.speed;
@@ -443,7 +385,9 @@ const loop = (time) => {
       sendState();
       lastSent = time;
     }
-    rightRender = getGuestRenderPos() || state.right;
+    renderRight.x = smoothTo(renderRight.x, state.right.x, 0.65, 0);
+    renderRight.y = smoothTo(renderRight.y, state.right.y, 0.65, 0);
+    renderRight.r = state.right.r;
   }
   if (role === "guest") {
     updateGuestLocal();
@@ -509,23 +453,11 @@ const connect = () => {
       }
       if (message.payload.pos) {
         const now = performance.now();
-        const nextPos = {
+        guestPos = {
           x: clamp(message.payload.pos.x, canvas.width / 2 + 40, bounds.maxX),
           y: clamp(message.payload.pos.y, bounds.minY, bounds.maxY),
         };
-        if (guestPos) {
-          const dt = Math.max(1, (now - guestPosTime) / 16);
-          guestPosVel = {
-            x: (nextPos.x - guestPos.x) / dt,
-            y: (nextPos.y - guestPos.y) / dt,
-          };
-        }
-        guestPos = nextPos;
         guestPosTime = now;
-        guestBuffer.push({ ...guestPos, time: guestPosTime });
-        if (guestBuffer.length > 8) {
-          guestBuffer.shift();
-        }
       }
     }
 
