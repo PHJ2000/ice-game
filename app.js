@@ -1,4 +1,4 @@
-const canvas = document.getElementById("arena");
+﻿const canvas = document.getElementById("arena");
 const ctx = canvas.getContext("2d");
 const resetBtn = document.getElementById("resetBtn");
 const statusText = document.getElementById("statusText");
@@ -21,7 +21,7 @@ const state = {
   puck: { x: 450, y: 260, r: 16, vx: 4, vy: 2.5 },
   scores: { left: 0, right: 0 },
   running: false,
-  status: "스페이스를 누르면 시작!",
+  status: "?ㅽ럹?댁뒪瑜??꾨Ⅴ硫??쒖옉!",
 };
 
 const bounds = {
@@ -36,10 +36,19 @@ let role = null;
 let roomCode = "";
 let lastSent = 0;
 let lastInputSignature = "";
+let lastInputSentAt = 0;
+let lastSentPos = { x: 0, y: 0 };
 let targetState = null;
 let targetStateTime = 0;
 let guestPos = null;
 let guestPosTime = 0;
+let audioReady = false;
+let audioContext;
+let masterGain;
+let bgOsc;
+let bgGain;
+let lastScoreLeft = 0;
+let lastScoreRight = 0;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
@@ -65,11 +74,45 @@ const resetGame = () => {
   scoreLeftEl.textContent = "0";
   scoreRightEl.textContent = "0";
   state.running = false;
-  state.status = "스페이스를 누르면 시작!";
+  state.status = "?ㅽ럹?댁뒪瑜??꾨Ⅴ硫??쒖옉!";
   statusText.textContent = state.status;
   resetRound();
   sendState();
 };
+
+const initAudio = () => {
+  if (audioReady) return;
+  audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  masterGain = audioContext.createGain();
+  masterGain.gain.value = 0.2;
+  masterGain.connect(audioContext.destination);
+
+  bgOsc = audioContext.createOscillator();
+  bgGain = audioContext.createGain();
+  bgOsc.type = "triangle";
+  bgOsc.frequency.value = 110;
+  bgGain.gain.value = 0.04;
+  bgOsc.connect(bgGain).connect(masterGain);
+  bgOsc.start();
+  audioReady = true;
+};
+
+const playTone = (frequency, duration = 0.1, volume = 0.2) => {
+  if (!audioReady) return;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  osc.type = "sine";
+  osc.frequency.value = frequency;
+  gain.gain.value = volume;
+  osc.connect(gain).connect(masterGain);
+  osc.start();
+  gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + duration);
+  osc.stop(audioContext.currentTime + duration);
+};
+
+const playWall = () => playTone(360, 0.08, 0.12);
+const playPaddle = () => playTone(520, 0.09, 0.18);
+const playGoal = () => playTone(220, 0.18, 0.22);
 
 const movePaddles = () => {
   const left = state.left;
@@ -109,9 +152,12 @@ const moveGuestPaddleLocally = () => {
 
 const handleWallCollision = () => {
   const puck = state.puck;
+  let bounced = false;
   if (puck.y - puck.r <= bounds.minY || puck.y + puck.r >= bounds.maxY) {
     puck.vy *= -1;
+    bounced = true;
   }
+  return bounced;
 };
 
 const handleSideWalls = () => {
@@ -120,14 +166,18 @@ const handleSideWalls = () => {
   const goalTop = canvas.height / 2 - goalHeight / 2;
   const goalBottom = canvas.height / 2 + goalHeight / 2;
   const inGoalY = puck.y > goalTop && puck.y < goalBottom;
+  let bounced = false;
 
   if (!inGoalY && puck.x - puck.r <= bounds.minX) {
     puck.vx = Math.abs(puck.vx);
+    bounced = true;
   }
 
   if (!inGoalY && puck.x + puck.r >= bounds.maxX) {
     puck.vx = -Math.abs(puck.vx);
+    bounced = true;
   }
+  return bounced;
 };
 
 const handleGoal = () => {
@@ -139,21 +189,24 @@ const handleGoal = () => {
   if (puck.x - puck.r <= 20 && puck.y > goalTop && puck.y < goalBottom) {
     state.scores.right += 1;
     scoreRightEl.textContent = state.scores.right.toString();
-    state.status = "PLAYER 2 득점!";
+    state.status = "PLAYER 2 ?앹젏!";
     resetRound(1);
+    return "right";
   }
 
   if (puck.x + puck.r >= canvas.width - 20 && puck.y > goalTop && puck.y < goalBottom) {
     state.scores.left += 1;
     scoreLeftEl.textContent = state.scores.left.toString();
-    state.status = "PLAYER 1 득점!";
+    state.status = "PLAYER 1 ?앹젏!";
     resetRound(-1);
+    return "left";
   }
 
   if (state.scores.left >= maxScore || state.scores.right >= maxScore) {
     state.running = false;
-    state.status = state.scores.left > state.scores.right ? "PLAYER 1 승리!" : "PLAYER 2 승리!";
+    state.status = state.scores.left > state.scores.right ? "PLAYER 1 ?밸━!" : "PLAYER 2 ?밸━!";
   }
+  return null;
 };
 
 const resolveCollision = (paddle) => {
@@ -174,7 +227,9 @@ const resolveCollision = (paddle) => {
     const extra = 0.8;
     puck.vx = Math.cos(angle) * (speed + extra);
     puck.vy = Math.sin(angle) * (speed + extra);
+    return true;
   }
+  return false;
 };
 
 const updatePuck = () => {
@@ -185,11 +240,13 @@ const updatePuck = () => {
   puck.vx *= 0.995;
   puck.vy *= 0.995;
 
-  handleWallCollision();
-  handleSideWalls();
-  resolveCollision(state.left);
-  resolveCollision(state.right);
-  handleGoal();
+  const wall = handleWallCollision() || handleSideWalls();
+  const hitLeft = resolveCollision(state.left);
+  const hitRight = resolveCollision(state.right);
+  const goal = handleGoal();
+  if (wall) playWall();
+  if (hitLeft || hitRight) playPaddle();
+  if (goal) playGoal();
 };
 
 const draw = () => {
@@ -234,6 +291,9 @@ const draw = () => {
 };
 
 const applyRemoteState = (payload) => {
+  const prevLeft = state.scores.left;
+  const prevRight = state.scores.right;
+
   if (role === "guest") {
     targetState = payload;
     targetStateTime = performance.now();
@@ -242,6 +302,21 @@ const applyRemoteState = (payload) => {
     state.status = payload.status;
   } else {
     state.left = { ...state.left, ...payload.left };
+    state.right = { ...state.right, ...payload.right };
+    state.puck = { ...state.puck, ...payload.puck };
+    state.scores = payload.scores;
+    state.running = payload.running;
+    state.status = payload.status;
+  }
+  scoreLeftEl.textContent = state.scores.left.toString();
+  scoreRightEl.textContent = state.scores.right.toString();
+  statusText.textContent = state.status;
+
+  const scored = state.scores.left !== prevLeft || state.scores.right !== prevRight;
+  if (scored) playGoal();
+  lastScoreLeft = state.scores.left;
+  lastScoreRight = state.scores.right;
+};
     state.right = { ...state.right, ...payload.right };
     state.puck = { ...state.puck, ...payload.puck };
     state.scores = payload.scores;
@@ -277,9 +352,19 @@ const sendState = () => {
 
 const sendInput = () => {
   if (role !== "guest" || !roomCode) return;
+  const now = performance.now();
   const signature = `${inputState.up}${inputState.down}${inputState.left}${inputState.right}`;
-  if (signature === lastInputSignature) return;
+  const dx = state.right.x - lastSentPos.x;
+  const dy = state.right.y - lastSentPos.y;
+  const moved = Math.hypot(dx, dy) > 0.6;
+  const timeOk = now - lastInputSentAt > 60;
+
+  if (signature === lastInputSignature && !moved && !timeOk) return;
+
   lastInputSignature = signature;
+  lastInputSentAt = now;
+  lastSentPos = { x: state.right.x, y: state.right.y };
+
   sendMessage({
     type: "input",
     room: roomCode,
@@ -312,10 +397,11 @@ const loop = (time) => {
 
     state.puck.x += state.puck.vx;
     state.puck.y += state.puck.vy;
-    handleWallCollision();
-    handleSideWalls();
-    resolveCollision(state.left);
-    resolveCollision(state.right);
+    const wall = handleWallCollision() || handleSideWalls();
+    const hitLeft = resolveCollision(state.left);
+    const hitRight = resolveCollision(state.right);
+    if (wall) playWall();
+    if (hitLeft || hitRight) playPaddle();
 
     if (targetState) {
       const dx = targetState.puck.x - state.puck.x;
@@ -324,7 +410,7 @@ const loop = (time) => {
       if (dist > 40) {
         state.puck.x = targetState.puck.x;
         state.puck.y = targetState.puck.y;
-      } else {
+      } else if (!hitRight) {
         state.puck.x = smoothTo(state.puck.x, targetState.puck.x, 0.25);
         state.puck.y = smoothTo(state.puck.y, targetState.puck.y, 0.25);
       }
@@ -350,7 +436,7 @@ const connect = () => {
   socket = new WebSocket(`${protocol}://${window.location.host}`);
 
   socket.addEventListener("open", () => {
-    setConnectionStatus("서버 연결됨");
+    setConnectionStatus("?쒕쾭 ?곌껐??);
     if (roomCode) {
       sendMessage({ type: "join", room: roomCode });
     }
@@ -360,28 +446,28 @@ const connect = () => {
     const message = JSON.parse(event.data);
     if (message.type === "role") {
       role = message.role;
-      setConnectionStatus(`방 ${message.room} · ${role === "host" ? "HOST" : "GUEST"}`);
+      setConnectionStatus(`諛?${message.room} 쨌 ${role === "host" ? "HOST" : "GUEST"}`);
       statusText.textContent =
         role === "host"
-          ? "상대가 들어오면 스페이스로 시작!"
-          : "HOST가 시작하면 경기 시작!";
+          ? "?곷?媛 ?ㅼ뼱?ㅻ㈃ ?ㅽ럹?댁뒪濡??쒖옉!"
+          : "HOST媛 ?쒖옉?섎㈃ 寃쎄린 ?쒖옉!";
     }
 
     if (message.type === "full") {
-      setConnectionStatus("방이 가득 찼어요.");
+      setConnectionStatus("諛⑹씠 媛??李쇱뼱??");
     }
 
     if (message.type === "guest-joined") {
-      statusText.textContent = "상대 입장! 스페이스로 시작!";
+      statusText.textContent = "?곷? ?낆옣! ?ㅽ럹?댁뒪濡??쒖옉!";
     }
 
     if (message.type === "guest-left") {
-      statusText.textContent = "상대가 나갔어요.";
+      statusText.textContent = "?곷?媛 ?섍컮?댁슂.";
       state.running = false;
     }
 
     if (message.type === "host-left") {
-      statusText.textContent = "HOST가 나갔어요. 새 방을 만들어주세요.";
+      statusText.textContent = "HOST媛 ?섍컮?댁슂. ??諛⑹쓣 留뚮뱾?댁＜?몄슂.";
       state.running = false;
     }
 
@@ -404,7 +490,7 @@ const connect = () => {
   });
 
   socket.addEventListener("close", () => {
-    setConnectionStatus("연결 끊김");
+    setConnectionStatus("?곌껐 ?딄?");
   });
 };
 
@@ -416,7 +502,7 @@ const createRoomCode = () => {
 const joinRoom = (code) => {
   const cleaned = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{4,6}$/.test(cleaned)) {
-    statusText.textContent = "방 코드는 4~6자리 영문/숫자만 가능해.";
+    statusText.textContent = "諛?肄붾뱶??4~6?먮━ ?곷Ц/?レ옄留?媛?ν빐.";
     return;
   }
   roomCode = cleaned;
@@ -432,19 +518,20 @@ const joinRoom = (code) => {
 
 const copyShareLink = async () => {
   if (!roomCode) {
-    statusText.textContent = "먼저 방을 만들어줘.";
+    statusText.textContent = "癒쇱? 諛⑹쓣 留뚮뱾?댁쨾.";
     return;
   }
   const url = `${window.location.origin}?room=${roomCode}`;
   try {
     await navigator.clipboard.writeText(url);
-    statusText.textContent = "링크를 복사했어!";
+    statusText.textContent = "留곹겕瑜?蹂듭궗?덉뼱!";
   } catch (error) {
-    statusText.textContent = "복사 실패. 주소창 링크를 직접 복사해줘.";
+    statusText.textContent = "蹂듭궗 ?ㅽ뙣. 二쇱냼李?留곹겕瑜?吏곸젒 蹂듭궗?댁쨾.";
   }
 };
 
 document.addEventListener("keydown", (event) => {
+  initAudio();
   const key = event.key.toLowerCase();
   if (["w", "a", "s", "d", " "].includes(key)) {
     event.preventDefault();
@@ -452,7 +539,7 @@ document.addEventListener("keydown", (event) => {
   if (key === " ") {
     if (role === "host") {
       state.running = !state.running;
-      state.status = state.running ? "경기 진행 중!" : "일시정지";
+      state.status = state.running ? "寃쎄린 吏꾪뻾 以?" : "?쇱떆?뺤?";
       statusText.textContent = state.status;
       sendState();
     }
@@ -496,6 +583,7 @@ resetBtn.addEventListener("click", resetGame);
 createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
 joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
 copyLinkBtn.addEventListener("click", copyShareLink);
+canvas.addEventListener("click", initAudio);
 
 setInterval(sendInput, 8);
 
@@ -510,3 +598,12 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
+
+
+
+
+
+
+
+
+
