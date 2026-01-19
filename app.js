@@ -48,8 +48,8 @@ let rightRender = null;
 let audioReady = false;
 let audioContext;
 let masterGain;
-let bgOsc;
-let bgGain;
+let musicTimer = null;
+let musicStep = 0;
 let lastScoreLeft = 0;
 let lastScoreRight = 0;
 
@@ -106,19 +106,14 @@ const initAudio = () => {
     masterGain = audioContext.createGain();
     masterGain.gain.value = 0.35;
     masterGain.connect(audioContext.destination);
-
-    bgOsc = audioContext.createOscillator();
-    bgGain = audioContext.createGain();
-    bgOsc.type = "triangle";
-    bgOsc.frequency.value = 110;
-    bgGain.gain.value = 0.08;
-    bgOsc.connect(bgGain).connect(masterGain);
-    bgOsc.start();
   }
   if (audioContext.state === "suspended") {
     audioContext.resume();
   }
-  audioReady = true;
+  if (!audioReady) {
+    audioReady = true;
+    startMusic();
+  }
 };
 
 const playTone = (frequency, duration = 0.1, volume = 0.2) => {
@@ -134,9 +129,42 @@ const playTone = (frequency, duration = 0.1, volume = 0.2) => {
   osc.stop(audioContext.currentTime + duration);
 };
 
+const playNote = (frequency, duration, volume, type = "triangle") => {
+  if (!audioReady) return;
+  const osc = audioContext.createOscillator();
+  const gain = audioContext.createGain();
+  osc.type = type;
+  osc.frequency.value = frequency;
+  gain.gain.value = volume;
+  osc.connect(gain).connect(masterGain);
+  osc.start();
+  gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + duration);
+  osc.stop(audioContext.currentTime + duration);
+};
+
+const startMusic = () => {
+  if (musicTimer) return;
+  const sequence = [
+    { f: 220.0, d: 0.24, v: 0.08 },
+    { f: 261.63, d: 0.24, v: 0.09 },
+    { f: 329.63, d: 0.24, v: 0.1 },
+    { f: 392.0, d: 0.32, v: 0.1 },
+    { f: 329.63, d: 0.2, v: 0.08 },
+    { f: 261.63, d: 0.2, v: 0.08 },
+    { f: 246.94, d: 0.24, v: 0.09 },
+    { f: 196.0, d: 0.3, v: 0.08 },
+  ];
+
+  musicTimer = setInterval(() => {
+    const note = sequence[musicStep % sequence.length];
+    playNote(note.f, note.d, note.v);
+    musicStep += 1;
+  }, 280);
+};
+
 const playWall = () => playTone(360, 0.08, 0.12);
 const playPaddle = () => playTone(520, 0.09, 0.18);
-const playGoal = () => playTone(220, 0.18, 0.22);
+const playGoal = () => playTone(220, 0.22, 0.3);
 
 const movePaddles = () => {
   const left = state.left;
@@ -398,42 +426,12 @@ const loop = (time) => {
     }
     rightRender = getGuestRenderPos() || state.right;
   }
-  if (role === "guest" && state.running) {
-    moveGuestPaddleLocally();
+  if (role === "guest") {
     if (targetState) {
-      state.left.x = smoothTo(state.left.x, targetState.left.x, 0.28);
-      state.left.y = smoothTo(state.left.y, targetState.left.y, 0.28);
-      state.puck.vx = targetState.puck.vx;
-      state.puck.vy = targetState.puck.vy;
+      state.left = { ...state.left, ...targetState.left };
+      state.right = { ...state.right, ...targetState.right };
+      state.puck = { ...state.puck, ...targetState.puck };
     }
-
-    state.puck.x += state.puck.vx;
-    state.puck.y += state.puck.vy;
-    const wall = handleWallCollision() || handleSideWalls();
-    const hitLeft = resolveCollision(state.left);
-    const hitRight = resolveCollision(state.right);
-    if (wall) playWall();
-    if (hitLeft || hitRight) playPaddle();
-
-    if (targetState) {
-      const dx = targetState.puck.x - state.puck.x;
-      const dy = targetState.puck.y - state.puck.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 40) {
-        state.puck.x = targetState.puck.x;
-        state.puck.y = targetState.puck.y;
-      } else if (!hitRight) {
-        state.puck.x = smoothTo(state.puck.x, targetState.puck.x, 0.25);
-        state.puck.y = smoothTo(state.puck.y, targetState.puck.y, 0.25);
-      }
-    }
-  } else if (role === "guest" && targetState) {
-    state.left.x = targetState.left.x;
-    state.left.y = targetState.left.y;
-    state.puck.x = targetState.puck.x;
-    state.puck.y = targetState.puck.y;
-    state.puck.vx = targetState.puck.vx;
-    state.puck.vy = targetState.puck.vy;
   }
   draw();
   requestAnimationFrame(loop);
@@ -627,6 +625,13 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
+
+
+
+
+
+
+
 
 
 
