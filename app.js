@@ -341,16 +341,6 @@ const applyRemoteState = (payload) => {
   lastScoreLeft = state.scores.left;
   lastScoreRight = state.scores.right;
 };
-    state.right = { ...state.right, ...payload.right };
-    state.puck = { ...state.puck, ...payload.puck };
-    state.scores = payload.scores;
-    state.running = payload.running;
-    state.status = payload.status;
-  }
-  scoreLeftEl.textContent = state.scores.left.toString();
-  scoreRightEl.textContent = state.scores.right.toString();
-  statusText.textContent = state.status;
-};
 
 const sendMessage = (data) => {
   if (socket && socket.readyState === WebSocket.OPEN) {
