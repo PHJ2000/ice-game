@@ -42,6 +42,8 @@ let targetState = null;
 let targetStateTime = 0;
 let guestPos = null;
 let guestPosTime = 0;
+let guestBuffer = [];
+let rightRender = null;
 let audioReady = false;
 let audioContext;
 let masterGain;
@@ -55,6 +57,23 @@ const lerp = (start, end, t) => start + (end - start) * t;
 const smoothTo = (current, target, alpha, deadzone = 0.15) => {
   if (Math.abs(target - current) <= deadzone) return target;
   return lerp(current, target, alpha);
+};
+
+const getGuestRenderPos = () => {
+  if (guestBuffer.length < 2) return null;
+  const renderTime = performance.now() - 80;
+  let older = guestBuffer[0];
+  let newer = guestBuffer[guestBuffer.length - 1];
+  for (let i = guestBuffer.length - 1; i >= 0; i -= 1) {
+    if (guestBuffer[i].time <= renderTime) {
+      older = guestBuffer[i];
+      newer = guestBuffer[i + 1] || guestBuffer[i];
+      break;
+    }
+  }
+  const span = newer.time - older.time || 1;
+  const t = clamp((renderTime - older.time) / span, 0, 1);
+  return { x: lerp(older.x, newer.x, t), y: lerp(older.y, newer.y, t) };
 };
 
 const resetRound = (direction = 1) => {
@@ -129,8 +148,8 @@ const movePaddles = () => {
 
   const hasFreshGuestPos = guestPos && performance.now() - guestPosTime < 120;
   if (hasFreshGuestPos) {
-    right.x = smoothTo(right.x, guestPos.x, 0.35);
-    right.y = smoothTo(right.y, guestPos.y, 0.35);
+    right.x = guestPos.x;
+    right.y = guestPos.y;
   } else {
     if (guestInput.up) right.y -= right.speed;
     if (guestInput.down) right.y += right.speed;
@@ -276,9 +295,10 @@ const draw = () => {
   ctx.arc(state.left.x, state.left.y, state.left.r, 0, Math.PI * 2);
   ctx.fill();
 
+  const renderRight = rightRender || state.right;
   ctx.fillStyle = "#263e59";
   ctx.beginPath();
-  ctx.arc(state.right.x, state.right.y, state.right.r, 0, Math.PI * 2);
+  ctx.arc(renderRight.x, renderRight.y, renderRight.r, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#10172b";
@@ -380,6 +400,7 @@ const loop = (time) => {
       sendState();
       lastSent = time;
     }
+    rightRender = getGuestRenderPos() || state.right;
   }
   if (role === "guest" && state.running) {
     moveGuestPaddleLocally();
@@ -428,10 +449,11 @@ const setConnectionStatus = (text) => {
 
 const connect = () => {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  socket = new WebSocket(`${protocol}://${window.location.host}`);
+  setConnectionStatus("Connecting...");
+  socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
 
   socket.addEventListener("open", () => {
-    setConnectionStatus("?쒕쾭 ?곌껐??);
+    setConnectionStatus("Connected");
     if (roomCode) {
       sendMessage({ type: "join", room: roomCode });
     }
@@ -441,28 +463,26 @@ const connect = () => {
     const message = JSON.parse(event.data);
     if (message.type === "role") {
       role = message.role;
-      setConnectionStatus(`諛?${message.room} 쨌 ${role === "host" ? "HOST" : "GUEST"}`);
+      setConnectionStatus(`Room ${message.room} - ${role === "host" ? "HOST" : "GUEST"}`);
       statusText.textContent =
-        role === "host"
-          ? "?곷?媛 ?ㅼ뼱?ㅻ㈃ ?ㅽ럹?댁뒪濡??쒖옉!"
-          : "HOST媛 ?쒖옉?섎㈃ 寃쎄린 ?쒖옉!";
+        role === "host" ? "Waiting for guest. Press Space to start." : "Waiting for host to start.";
     }
 
     if (message.type === "full") {
-      setConnectionStatus("諛⑹씠 媛??李쇱뼱??");
+      setConnectionStatus("Room full");
     }
 
     if (message.type === "guest-joined") {
-      statusText.textContent = "?곷? ?낆옣! ?ㅽ럹?댁뒪濡??쒖옉!";
+      statusText.textContent = "Guest joined. Press Space to start.";
     }
 
     if (message.type === "guest-left") {
-      statusText.textContent = "?곷?媛 ?섍컮?댁슂.";
+      statusText.textContent = "Guest left.";
       state.running = false;
     }
 
     if (message.type === "host-left") {
-      statusText.textContent = "HOST媛 ?섍컮?댁슂. ??諛⑹쓣 留뚮뱾?댁＜?몄슂.";
+      statusText.textContent = "Host left. Create a new room.";
       state.running = false;
     }
 
@@ -476,6 +496,10 @@ const connect = () => {
           y: clamp(message.payload.pos.y, bounds.minY, bounds.maxY),
         };
         guestPosTime = performance.now();
+        guestBuffer.push({ ...guestPos, time: guestPosTime });
+        if (guestBuffer.length > 8) {
+          guestBuffer.shift();
+        }
       }
     }
 
@@ -485,7 +509,11 @@ const connect = () => {
   });
 
   socket.addEventListener("close", () => {
-    setConnectionStatus("?곌껐 ?딄?");
+    setConnectionStatus("Disconnected");
+  });
+
+  socket.addEventListener("error", () => {
+    setConnectionStatus("Connection error");
   });
 };
 

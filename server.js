@@ -13,6 +13,11 @@ const mimeTypes = {
 };
 
 const server = http.createServer((req, res) => {
+  if (req.url === "/health") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("ok");
+    return;
+  }
   const safePath = req.url === "/" ? "/index.html" : req.url;
   const filePath = path.join(baseDir, path.normalize(safePath));
 
@@ -34,7 +39,7 @@ const server = http.createServer((req, res) => {
   });
 });
 
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, path: "/ws" });
 const rooms = new Map();
 let nextId = 1;
 
