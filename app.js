@@ -283,7 +283,7 @@ const loop = (time) => {
       movePaddles();
       updatePuck();
     }
-    if (time - lastSent > 16) {
+    if (time - lastSent > 8) {
       sendState();
       lastSent = time;
     }
@@ -296,8 +296,23 @@ const loop = (time) => {
       const predictedY = targetState.puck.y + targetState.puck.vy * since * 60;
       state.left.x = smoothTo(state.left.x, targetState.left.x, 0.12);
       state.left.y = smoothTo(state.left.y, targetState.left.y, 0.12);
-      state.puck.x = smoothTo(state.puck.x, predictedX, 0.16);
-      state.puck.y = smoothTo(state.puck.y, predictedY, 0.16);
+
+      const dx = predictedX - state.puck.x;
+      const dy = predictedY - state.puck.y;
+      const dist = Math.hypot(dx, dy);
+      const snap = dist > 35;
+      const paddleDx = state.right.x - predictedX;
+      const paddleDy = state.right.y - predictedY;
+      const nearGuest = Math.hypot(paddleDx, paddleDy) < state.right.r + state.puck.r + 10;
+      const alpha = nearGuest ? 0.4 : 0.18;
+
+      if (snap || nearGuest) {
+        state.puck.x = predictedX;
+        state.puck.y = predictedY;
+      } else {
+        state.puck.x = smoothTo(state.puck.x, predictedX, alpha);
+        state.puck.y = smoothTo(state.puck.y, predictedY, alpha);
+      }
     }
   }
   draw();
@@ -451,7 +466,7 @@ createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
 joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
 copyLinkBtn.addEventListener("click", copyShareLink);
 
-setInterval(sendInput, 16);
+setInterval(sendInput, 8);
 
 const params = new URLSearchParams(window.location.search);
 const roomParam = params.get("room");
