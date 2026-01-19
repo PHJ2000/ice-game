@@ -10,6 +10,7 @@ const mimeTypes = {
   ".html": "text/html",
   ".css": "text/css",
   ".js": "application/javascript",
+  ".wav": "audio/wav",
 };
 
 const server = http.createServer((req, res) => {

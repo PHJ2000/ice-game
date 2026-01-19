@@ -50,8 +50,10 @@ let audioContext;
 let masterGain;
 let musicTimer = null;
 let musicStep = 0;
+let bgm;
 let lastScoreLeft = 0;
 let lastScoreRight = 0;
+let guestLocal = { x: state.right.x, y: state.right.y };
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
@@ -82,6 +84,9 @@ const resetRound = (direction = 1) => {
   state.left.y = 260;
   state.right.x = 760;
   state.right.y = 260;
+  if (role === "guest") {
+    guestLocal = { x: state.right.x, y: state.right.y };
+  }
   state.puck.x = canvas.width / 2;
   state.puck.y = canvas.height / 2;
   state.puck.vx = 4 * direction;
@@ -112,7 +117,12 @@ const initAudio = () => {
   }
   if (!audioReady) {
     audioReady = true;
-    startMusic();
+    if (!bgm) {
+      bgm = new Audio("assets/bgm.wav");
+      bgm.loop = true;
+      bgm.volume = 0.35;
+    }
+    bgm.play().catch(() => {});
   }
 };
 
@@ -205,6 +215,15 @@ const moveGuestPaddleLocally = () => {
   if (inputState.right) right.x += right.speed;
   right.x = clamp(right.x, canvas.width / 2 + 40, bounds.maxX);
   right.y = clamp(right.y, bounds.minY, bounds.maxY);
+};
+
+const updateGuestLocal = () => {
+  if (inputState.up) guestLocal.y -= state.right.speed;
+  if (inputState.down) guestLocal.y += state.right.speed;
+  if (inputState.left) guestLocal.x -= state.right.speed;
+  if (inputState.right) guestLocal.x += state.right.speed;
+  guestLocal.x = clamp(guestLocal.x, canvas.width / 2 + 40, bounds.maxX);
+  guestLocal.y = clamp(guestLocal.y, bounds.minY, bounds.maxY);
 };
 
 const handleWallCollision = () => {
@@ -403,13 +422,13 @@ const sendInput = () => {
   const now = performance.now();
   lastInputSignature = `${inputState.up}${inputState.down}${inputState.left}${inputState.right}`;
   lastInputSentAt = now;
-  lastSentPos = { x: state.right.x, y: state.right.y };
+  lastSentPos = { x: guestLocal.x, y: guestLocal.y };
   sendMessage({
     type: "input",
     room: roomCode,
     payload: {
       input: inputState,
-      pos: { x: state.right.x, y: state.right.y },
+      pos: { x: guestLocal.x, y: guestLocal.y },
     },
   });
 };
@@ -427,10 +446,14 @@ const loop = (time) => {
     rightRender = getGuestRenderPos() || state.right;
   }
   if (role === "guest") {
+    updateGuestLocal();
     if (targetState) {
       state.left = { ...state.left, ...targetState.left };
       state.right = { ...state.right, ...targetState.right };
       state.puck = { ...state.puck, ...targetState.puck };
+      if (!state.running) {
+        guestLocal = { x: state.right.x, y: state.right.y };
+      }
     }
   }
   draw();
