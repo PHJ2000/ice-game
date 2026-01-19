@@ -42,6 +42,7 @@ let targetState = null;
 let targetStateTime = 0;
 let guestPos = null;
 let guestPosTime = 0;
+let guestPosVel = { x: 0, y: 0 };
 let guestBuffer = [];
 let rightRender = null;
 let audioReady = false;
@@ -103,14 +104,14 @@ const initAudio = () => {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
     masterGain = audioContext.createGain();
-    masterGain.gain.value = 0.25;
+    masterGain.gain.value = 0.35;
     masterGain.connect(audioContext.destination);
 
     bgOsc = audioContext.createOscillator();
     bgGain = audioContext.createGain();
     bgOsc.type = "triangle";
     bgOsc.frequency.value = 110;
-    bgGain.gain.value = 0.05;
+    bgGain.gain.value = 0.08;
     bgOsc.connect(bgGain).connect(masterGain);
     bgOsc.start();
   }
@@ -146,10 +147,15 @@ const movePaddles = () => {
   if (inputState.left) left.x -= left.speed;
   if (inputState.right) left.x += left.speed;
 
-  const hasFreshGuestPos = guestPos && performance.now() - guestPosTime < 120;
+  const now = performance.now();
+  const hasFreshGuestPos = guestPos && now - guestPosTime < 120;
   if (hasFreshGuestPos) {
-    right.x = guestPos.x;
-    right.y = guestPos.y;
+    const age = Math.max(0, now - guestPosTime);
+    const lead = Math.min(age / 16, 2);
+    const predictedX = guestPos.x + guestPosVel.x * lead;
+    const predictedY = guestPos.y + guestPosVel.y * lead;
+    right.x = clamp(predictedX, canvas.width / 2 + 40, bounds.maxX);
+    right.y = clamp(predictedY, bounds.minY, bounds.maxY);
   } else {
     if (guestInput.up) right.y -= right.speed;
     if (guestInput.down) right.y += right.speed;
@@ -481,11 +487,20 @@ const connect = () => {
         Object.assign(guestInput, message.payload.input);
       }
       if (message.payload.pos) {
-        guestPos = {
+        const now = performance.now();
+        const nextPos = {
           x: clamp(message.payload.pos.x, canvas.width / 2 + 40, bounds.maxX),
           y: clamp(message.payload.pos.y, bounds.minY, bounds.maxY),
         };
-        guestPosTime = performance.now();
+        if (guestPos) {
+          const dt = Math.max(1, (now - guestPosTime) / 16);
+          guestPosVel = {
+            x: (nextPos.x - guestPos.x) / dt,
+            y: (nextPos.y - guestPos.y) / dt,
+          };
+        }
+        guestPos = nextPos;
+        guestPosTime = now;
         guestBuffer.push({ ...guestPos, time: guestPosTime });
         if (guestBuffer.length > 8) {
           guestBuffer.shift();
@@ -597,6 +612,7 @@ createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
 joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
 copyLinkBtn.addEventListener("click", copyShareLink);
 canvas.addEventListener("click", initAudio);
+document.addEventListener("pointerdown", initAudio);
 
 setInterval(sendInput, 16);
 
@@ -611,6 +627,11 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
+
+
+
+
+
 
 
 
