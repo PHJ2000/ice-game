@@ -1,4 +1,5 @@
-﻿const canvas = document.getElementById("arena");
+﻿// 캔버스/DOM 요소
+const canvas = document.getElementById("arena");
 const ctx = canvas.getContext("2d");
 const resetBtn = document.getElementById("resetBtn");
 const statusText = document.getElementById("statusText");
@@ -10,20 +11,23 @@ const joinBtn = document.getElementById("joinBtn");
 const copyLinkBtn = document.getElementById("copyLinkBtn");
 const connectionStatus = document.getElementById("connectionStatus");
 
+// 입력/상수
 const keys = new Set();
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
 const guestInput = { up: false, down: false, left: false, right: false };
 
+// 게임 상태
 const state = {
   left: { x: 140, y: 260, r: 26, speed: 5.5 },
   right: { x: 760, y: 260, r: 26, speed: 5.5 },
   puck: { x: 450, y: 260, r: 16, vx: 4, vy: 2.5 },
   scores: { left: 0, right: 0 },
   running: false,
-  status: "?ㅽ럹?댁뒪瑜??꾨Ⅴ硫??쒖옉!",
+  status: "스페이스를 누르면 시작!",
 };
 
+// 경기장 경계
 const bounds = {
   minX: 40,
   maxX: canvas.width - 40,
@@ -31,6 +35,7 @@ const bounds = {
   maxY: canvas.height - 40,
 };
 
+// 네트워크/동기화
 let socket;
 let role = null;
 let roomCode = "";
@@ -43,6 +48,7 @@ let targetStateTime = 0;
 let guestPos = null;
 let guestPosTime = 0;
 let renderRight = { x: state.right.x, y: state.right.y, r: state.right.r };
+// 오디오
 let audioReady = false;
 let audioContext;
 let masterGain;
@@ -51,6 +57,7 @@ let lastScoreLeft = 0;
 let lastScoreRight = 0;
 let guestLocal = { x: state.right.x, y: state.right.y };
 
+// 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
 const smoothTo = (current, target, alpha, deadzone = 0.15) => {
@@ -58,6 +65,7 @@ const smoothTo = (current, target, alpha, deadzone = 0.15) => {
   return lerp(current, target, alpha);
 };
 
+// 라운드/리셋
 const resetRound = (direction = 1) => {
   state.left.x = 140;
   state.left.y = 260;
@@ -78,12 +86,13 @@ const resetGame = () => {
   scoreLeftEl.textContent = "0";
   scoreRightEl.textContent = "0";
   state.running = false;
-  state.status = "?ㅽ럹?댁뒪瑜??꾨Ⅴ硫??쒖옉!";
+  state.status = "스페이스를 누르면 시작!";
   statusText.textContent = state.status;
   resetRound();
   sendState();
 };
 
+// 오디오 초기화/효과음
 const initAudio = () => {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -122,6 +131,7 @@ const playWall = () => playTone(360, 0.08, 0.12);
 const playPaddle = () => playTone(520, 0.09, 0.18);
 const playGoal = () => playTone(220, 0.22, 0.3);
 
+// 입력으로 패들 이동(호스트)
 const movePaddles = () => {
   const left = state.left;
   const right = state.right;
@@ -149,6 +159,7 @@ const movePaddles = () => {
   right.y = clamp(right.y, bounds.minY, bounds.maxY);
 };
 
+// 게스트 로컬 이동(입력 추적용)
 const moveGuestPaddleLocally = () => {
   const right = state.right;
   if (inputState.up) right.y -= right.speed;
@@ -159,6 +170,7 @@ const moveGuestPaddleLocally = () => {
   right.y = clamp(right.y, bounds.minY, bounds.maxY);
 };
 
+// 게스트 로컬 위치 갱신(전송용)
 const updateGuestLocal = () => {
   if (inputState.up) guestLocal.y -= state.right.speed;
   if (inputState.down) guestLocal.y += state.right.speed;
@@ -168,6 +180,7 @@ const updateGuestLocal = () => {
   guestLocal.y = clamp(guestLocal.y, bounds.minY, bounds.maxY);
 };
 
+// 벽 충돌 처리
 const handleWallCollision = () => {
   const puck = state.puck;
   let bounced = false;
@@ -178,6 +191,7 @@ const handleWallCollision = () => {
   return bounced;
 };
 
+// 좌우 벽 충돌 처리(골문 제외)
 const handleSideWalls = () => {
   const puck = state.puck;
   const goalHeight = 140;
@@ -198,6 +212,7 @@ const handleSideWalls = () => {
   return bounced;
 };
 
+// 득점 처리
 const handleGoal = () => {
   const puck = state.puck;
   const goalHeight = 140;
@@ -207,7 +222,7 @@ const handleGoal = () => {
   if (puck.x - puck.r <= 20 && puck.y > goalTop && puck.y < goalBottom) {
     state.scores.right += 1;
     scoreRightEl.textContent = state.scores.right.toString();
-    state.status = "PLAYER 2 ?앹젏!";
+    state.status = "플레이어 2 득점!";
     resetRound(1);
     return "right";
   }
@@ -215,18 +230,19 @@ const handleGoal = () => {
   if (puck.x + puck.r >= canvas.width - 20 && puck.y > goalTop && puck.y < goalBottom) {
     state.scores.left += 1;
     scoreLeftEl.textContent = state.scores.left.toString();
-    state.status = "PLAYER 1 ?앹젏!";
+    state.status = "플레이어 1 득점!";
     resetRound(-1);
     return "left";
   }
 
   if (state.scores.left >= maxScore || state.scores.right >= maxScore) {
     state.running = false;
-    state.status = state.scores.left > state.scores.right ? "PLAYER 1 ?밸━!" : "PLAYER 2 ?밸━!";
+    state.status = state.scores.left > state.scores.right ? "플레이어 1 승리!" : "플레이어 2 승리!";
   }
   return null;
 };
 
+// 패들 충돌 처리
 const resolveCollision = (paddle) => {
   const puck = state.puck;
   const dx = puck.x - paddle.x;
@@ -250,6 +266,7 @@ const resolveCollision = (paddle) => {
   return false;
 };
 
+// 퍽 물리 업데이트(호스트)
 const updatePuck = () => {
   const puck = state.puck;
   puck.x += puck.vx;
@@ -267,6 +284,7 @@ const updatePuck = () => {
   if (goal) playGoal();
 };
 
+// 렌더링
 const draw = () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -309,6 +327,7 @@ const draw = () => {
   ctx.fillRect(canvas.width - 40, goalTop, 20, goalHeight);
 };
 
+// 원격 상태 적용(게스트)
 const applyRemoteState = (payload) => {
   const prevLeft = state.scores.left;
   const prevRight = state.scores.right;
@@ -337,12 +356,14 @@ const applyRemoteState = (payload) => {
   lastScoreRight = state.scores.right;
 };
 
+// 메시지 전송
 const sendMessage = (data) => {
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(data));
   }
 };
 
+// 호스트 상태 브로드캐스트
 const sendState = () => {
   if (role !== "host") return;
   sendMessage({
@@ -359,6 +380,7 @@ const sendState = () => {
   });
 };
 
+// 게스트 입력 전송
 const sendInput = () => {
   if (role !== "guest" || !roomCode) return;
   const now = performance.now();
@@ -375,6 +397,7 @@ const sendInput = () => {
   });
 };
 
+// 게임 루프
 const loop = (time) => {
   if (role === "host") {
     if (state.running) {
@@ -404,17 +427,19 @@ const loop = (time) => {
   requestAnimationFrame(loop);
 };
 
+// 연결 상태 표시
 const setConnectionStatus = (text) => {
   connectionStatus.textContent = text;
 };
 
+// WebSocket 연결
 const connect = () => {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  setConnectionStatus("Connecting...");
+  setConnectionStatus("연결 중...");
   socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
 
   socket.addEventListener("open", () => {
-    setConnectionStatus("Connected");
+    setConnectionStatus("연결됨");
     if (roomCode) {
       sendMessage({ type: "join", room: roomCode });
     }
@@ -424,26 +449,26 @@ const connect = () => {
     const message = JSON.parse(event.data);
     if (message.type === "role") {
       role = message.role;
-      setConnectionStatus(`Room ${message.room} - ${role === "host" ? "HOST" : "GUEST"}`);
+      setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
       statusText.textContent =
-        role === "host" ? "Waiting for guest. Press Space to start." : "Waiting for host to start.";
+        role === "host" ? "게스트 대기 중. 스페이스로 시작!" : "호스트가 시작하면 게임 시작.";
     }
 
     if (message.type === "full") {
-      setConnectionStatus("Room full");
+      setConnectionStatus("방이 가득 찼어요");
     }
 
     if (message.type === "guest-joined") {
-      statusText.textContent = "Guest joined. Press Space to start.";
+      statusText.textContent = "게스트 입장! 스페이스로 시작!";
     }
 
     if (message.type === "guest-left") {
-      statusText.textContent = "Guest left.";
+      statusText.textContent = "게스트가 나갔어요.";
       state.running = false;
     }
 
     if (message.type === "host-left") {
-      statusText.textContent = "Host left. Create a new room.";
+      statusText.textContent = "호스트가 나갔어요. 새 방을 만들어주세요.";
       state.running = false;
     }
 
@@ -467,14 +492,15 @@ const connect = () => {
   });
 
   socket.addEventListener("close", () => {
-    setConnectionStatus("Disconnected");
+    setConnectionStatus("연결 끊김");
   });
 
   socket.addEventListener("error", () => {
-    setConnectionStatus("Connection error");
+    setConnectionStatus("연결 오류");
   });
 };
 
+// 방 코드 생성/참가
 const createRoomCode = () => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
@@ -483,9 +509,9 @@ const createRoomCode = () => {
 const joinRoom = (code) => {
   const cleaned = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{4,6}$/.test(cleaned)) {
-    statusText.textContent = "諛?肄붾뱶??4~6?먮━ ?곷Ц/?レ옄留?媛?ν빐.";
+    statusText.textContent = "방 코드는 4~6자리 영문/숫자만 가능해요.";
     return;
-  }
+  }'
   roomCode = cleaned;
   roomInput.value = roomCode;
   if (!socket || socket.readyState === WebSocket.CLOSED) {
@@ -497,20 +523,22 @@ const joinRoom = (code) => {
   }
 };
 
+// 링크 복사
 const copyShareLink = async () => {
   if (!roomCode) {
-    statusText.textContent = "癒쇱? 諛⑹쓣 留뚮뱾?댁쨾.";
+    statusText.textContent = "먼저 방을 만들어주세요.";
     return;
   }
   const url = `${window.location.origin}?room=${roomCode}`;
   try {
     await navigator.clipboard.writeText(url);
-    statusText.textContent = "留곹겕瑜?蹂듭궗?덉뼱!";
+    statusText.textContent = "링크를 복사했어요!";
   } catch (error) {
-    statusText.textContent = "蹂듭궗 ?ㅽ뙣. 二쇱냼李?留곹겕瑜?吏곸젒 蹂듭궗?댁쨾.";
+    statusText.textContent = "복사 실패. 주소창 링크를 직접 복사해주세요.";
   }
 };
 
+// 키 입력 처리
 document.addEventListener("keydown", (event) => {
   initAudio();
   const key = event.key.toLowerCase();
@@ -520,7 +548,7 @@ document.addEventListener("keydown", (event) => {
   if (key === " ") {
     if (role === "host") {
       state.running = !state.running;
-      state.status = state.running ? "寃쎄린 吏꾪뻾 以?" : "?쇱떆?뺤?";
+      state.status = state.running ? "경기 진행 중!" : "일시정지";
       statusText.textContent = state.status;
       sendState();
     }
@@ -580,6 +608,13 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
+
+
+
+
+
+
+
 
 
 
