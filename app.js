@@ -38,8 +38,6 @@ let lastSent = 0;
 let lastInputSignature = "";
 let targetState = null;
 let targetStateTime = 0;
-let collisionGraceUntil = 0;
-let lastGuestTime = 0;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
@@ -292,19 +290,7 @@ const loop = (time) => {
   }
   if (role === "guest" && state.running) {
     moveGuestPaddleLocally();
-    const delta = lastGuestTime ? time - lastGuestTime : 16;
-    lastGuestTime = time;
-
-    if (time < collisionGraceUntil) {
-      const steps = Math.max(1, Math.round(delta / 16));
-      for (let i = 0; i < steps; i += 1) {
-        state.puck.x += state.puck.vx;
-        state.puck.y += state.puck.vy;
-        handleWallCollision();
-        handleSideWalls();
-        resolveCollision(state.right);
-      }
-    } else if (targetState) {
+    if (targetState) {
       const since = Math.min((time - targetStateTime) / 1000, 0.15);
       const predictedX = targetState.puck.x + targetState.puck.vx * since * 60;
       const predictedY = targetState.puck.y + targetState.puck.vy * since * 60;
@@ -314,11 +300,11 @@ const loop = (time) => {
       const dx = predictedX - state.puck.x;
       const dy = predictedY - state.puck.y;
       const dist = Math.hypot(dx, dy);
-      const snap = dist > 35;
+      const snap = dist > 24;
       const paddleDx = state.right.x - predictedX;
       const paddleDy = state.right.y - predictedY;
-      const nearGuest = Math.hypot(paddleDx, paddleDy) < state.right.r + state.puck.r + 10;
-      const alpha = nearGuest ? 0.4 : 0.18;
+      const nearGuest = Math.hypot(paddleDx, paddleDy) < state.right.r + state.puck.r + 18;
+      const alpha = nearGuest ? 1 : 0.16;
 
       if (snap || nearGuest) {
         state.puck.x = predictedX;
@@ -327,16 +313,6 @@ const loop = (time) => {
         state.puck.x = smoothTo(state.puck.x, predictedX, alpha);
         state.puck.y = smoothTo(state.puck.y, predictedY, alpha);
       }
-    }
-
-    const dx = state.puck.x - state.right.x;
-    const dy = state.puck.y - state.right.y;
-    const dist = Math.hypot(dx, dy);
-    const minDist = state.puck.r + state.right.r;
-    const movingToward = state.puck.vx * dx + state.puck.vy * dy < 0;
-    if (dist < minDist && movingToward) {
-      resolveCollision(state.right);
-      collisionGraceUntil = time + 140;
     }
   }
   draw();
