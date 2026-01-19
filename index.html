@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>에어하키 1:1</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">🏒</span>
+          <div>
+            <div class="brand-title">에어하키 1:1</div>
+            <div class="brand-subtitle">로컬 대결</div>
+          </div>
+        </div>
+        <button class="ghost" id="resetBtn">리셋</button>
+      </header>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h1>친구와 1:1 에어하키 대결</h1>
+          <p>왼쪽 플레이어: WASD · 오른쪽 플레이어: 방향키 · 목표 점수 7점</p>
+        </div>
+
+        <div class="room-controls">
+          <input
+            id="roomInput"
+            type="text"
+            maxlength="6"
+            placeholder="방 코드 (예: A7K9)"
+            aria-label="방 코드 입력"
+          />
+          <button class="pill" id="createBtn">방 만들기</button>
+          <button class="ghost" id="joinBtn">참가</button>
+          <button class="ghost" id="copyLinkBtn">링크 복사</button>
+          <span class="connection" id="connectionStatus">연결 대기 중</span>
+        </div>
+
+        <div class="scoreboard">
+          <div class="score">
+            <span>PLAYER 1</span>
+            <strong id="scoreLeft">0</strong>
+          </div>
+          <div class="score">
+            <span>PLAYER 2</span>
+            <strong id="scoreRight">0</strong>
+          </div>
+        </div>
+
+        <div class="arena-wrap">
+          <canvas id="arena" width="900" height="520"></canvas>
+          <div class="status" id="statusText">스페이스를 누르면 시작!</div>
+        </div>
+      </section>
+
+      <section class="tips">
+        <h2>플레이 팁</h2>
+        <ul>
+          <li>방 만들기 → 링크 복사 → 친구에게 전달하면 바로 참가 가능.</li>
+          <li>패들의 중앙으로 퍽을 맞히면 더 멀리 날아가요.</li>
+          <li>수비는 골문 중앙을 먼저 지키는 게 안정적이에요.</li>
+          <li>스페이스로 일시정지/재개가 가능합니다.</li>
+        </ul>
+      </section>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

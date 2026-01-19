@@ -1,0 +1,12 @@
+{
+  "name": "air-hockey-online",
+  "version": "1.0.0",
+  "description": "Simple 1v1 online air hockey",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
