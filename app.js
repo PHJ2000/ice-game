@@ -38,6 +38,8 @@ let lastSent = 0;
 let lastInputSignature = "";
 let targetState = null;
 let targetStateTime = 0;
+let guestPos = null;
+let guestPosTime = 0;
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
@@ -78,10 +80,16 @@ const movePaddles = () => {
   if (inputState.left) left.x -= left.speed;
   if (inputState.right) left.x += left.speed;
 
-  if (guestInput.up) right.y -= right.speed;
-  if (guestInput.down) right.y += right.speed;
-  if (guestInput.left) right.x -= right.speed;
-  if (guestInput.right) right.x += right.speed;
+  const hasFreshGuestPos = guestPos && performance.now() - guestPosTime < 120;
+  if (hasFreshGuestPos) {
+    right.x = guestPos.x;
+    right.y = guestPos.y;
+  } else {
+    if (guestInput.up) right.y -= right.speed;
+    if (guestInput.down) right.y += right.speed;
+    if (guestInput.left) right.x -= right.speed;
+    if (guestInput.right) right.x += right.speed;
+  }
 
   left.x = clamp(left.x, bounds.minX, canvas.width / 2 - 40);
   left.y = clamp(left.y, bounds.minY, bounds.maxY);
@@ -272,7 +280,14 @@ const sendInput = () => {
   const signature = `${inputState.up}${inputState.down}${inputState.left}${inputState.right}`;
   if (signature === lastInputSignature) return;
   lastInputSignature = signature;
-  sendMessage({ type: "input", room: roomCode, payload: inputState });
+  sendMessage({
+    type: "input",
+    room: roomCode,
+    payload: {
+      input: inputState,
+      pos: { x: state.right.x, y: state.right.y },
+    },
+  });
 };
 
 const loop = (time) => {
@@ -371,7 +386,16 @@ const connect = () => {
     }
 
     if (message.type === "guest-input" && role === "host") {
-      Object.assign(guestInput, message.payload);
+      if (message.payload.input) {
+        Object.assign(guestInput, message.payload.input);
+      }
+      if (message.payload.pos) {
+        guestPos = {
+          x: clamp(message.payload.pos.x, canvas.width / 2 + 40, bounds.maxX),
+          y: clamp(message.payload.pos.y, bounds.minY, bounds.maxY),
+        };
+        guestPosTime = performance.now();
+      }
     }
 
     if (message.type === "state" && role === "guest") {
