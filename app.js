@@ -229,8 +229,6 @@ const applyRemoteState = (payload) => {
   if (role === "guest") {
     targetState = payload;
     targetStateTime = performance.now();
-    state.puck.vx = payload.puck.vx;
-    state.puck.vy = payload.puck.vy;
     state.scores = payload.scores;
     state.running = payload.running;
     state.status = payload.status;
@@ -291,29 +289,38 @@ const loop = (time) => {
   if (role === "guest" && state.running) {
     moveGuestPaddleLocally();
     if (targetState) {
-      const since = Math.min((time - targetStateTime) / 1000, 0.15);
-      const predictedX = targetState.puck.x + targetState.puck.vx * since * 60;
-      const predictedY = targetState.puck.y + targetState.puck.vy * since * 60;
-      state.left.x = smoothTo(state.left.x, targetState.left.x, 0.12);
-      state.left.y = smoothTo(state.left.y, targetState.left.y, 0.12);
+      state.left.x = smoothTo(state.left.x, targetState.left.x, 0.28);
+      state.left.y = smoothTo(state.left.y, targetState.left.y, 0.28);
+      state.puck.vx = targetState.puck.vx;
+      state.puck.vy = targetState.puck.vy;
+    }
 
-      const dx = predictedX - state.puck.x;
-      const dy = predictedY - state.puck.y;
+    state.puck.x += state.puck.vx;
+    state.puck.y += state.puck.vy;
+    handleWallCollision();
+    handleSideWalls();
+    resolveCollision(state.left);
+    resolveCollision(state.right);
+
+    if (targetState) {
+      const dx = targetState.puck.x - state.puck.x;
+      const dy = targetState.puck.y - state.puck.y;
       const dist = Math.hypot(dx, dy);
-      const snap = dist > 24;
-      const paddleDx = state.right.x - predictedX;
-      const paddleDy = state.right.y - predictedY;
-      const nearGuest = Math.hypot(paddleDx, paddleDy) < state.right.r + state.puck.r + 18;
-      const alpha = nearGuest ? 1 : 0.16;
-
-      if (snap || nearGuest) {
-        state.puck.x = predictedX;
-        state.puck.y = predictedY;
+      if (dist > 40) {
+        state.puck.x = targetState.puck.x;
+        state.puck.y = targetState.puck.y;
       } else {
-        state.puck.x = smoothTo(state.puck.x, predictedX, alpha);
-        state.puck.y = smoothTo(state.puck.y, predictedY, alpha);
+        state.puck.x = smoothTo(state.puck.x, targetState.puck.x, 0.25);
+        state.puck.y = smoothTo(state.puck.y, targetState.puck.y, 0.25);
       }
     }
+  } else if (role === "guest" && targetState) {
+    state.left.x = targetState.left.x;
+    state.left.y = targetState.left.y;
+    state.puck.x = targetState.puck.x;
+    state.puck.y = targetState.puck.y;
+    state.puck.vx = targetState.puck.vx;
+    state.puck.vy = targetState.puck.vy;
   }
   draw();
   requestAnimationFrame(loop);
