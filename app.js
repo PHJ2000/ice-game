@@ -35,8 +35,10 @@ let socket;
 let role = null;
 let roomCode = "";
 let lastSent = 0;
+let lastInputSignature = "";
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+const lerp = (start, end, t) => start + (end - start) * t;
 
 const resetRound = (direction = 1) => {
   state.left.x = 140;
@@ -81,10 +83,36 @@ const movePaddles = () => {
   right.y = clamp(right.y, bounds.minY, bounds.maxY);
 };
 
+const moveGuestPaddleLocally = () => {
+  const right = state.right;
+  if (inputState.up) right.y -= right.speed;
+  if (inputState.down) right.y += right.speed;
+  if (inputState.left) right.x -= right.speed;
+  if (inputState.right) right.x += right.speed;
+  right.x = clamp(right.x, canvas.width / 2 + 40, bounds.maxX);
+  right.y = clamp(right.y, bounds.minY, bounds.maxY);
+};
+
 const handleWallCollision = () => {
   const puck = state.puck;
   if (puck.y - puck.r <= bounds.minY || puck.y + puck.r >= bounds.maxY) {
     puck.vy *= -1;
+  }
+};
+
+const handleSideWalls = () => {
+  const puck = state.puck;
+  const goalHeight = 140;
+  const goalTop = canvas.height / 2 - goalHeight / 2;
+  const goalBottom = canvas.height / 2 + goalHeight / 2;
+  const inGoalY = puck.y > goalTop && puck.y < goalBottom;
+
+  if (!inGoalY && puck.x - puck.r <= bounds.minX) {
+    puck.vx = Math.abs(puck.vx);
+  }
+
+  if (!inGoalY && puck.x + puck.r >= bounds.maxX) {
+    puck.vx = -Math.abs(puck.vx);
   }
 };
 
@@ -144,6 +172,7 @@ const updatePuck = () => {
   puck.vy *= 0.995;
 
   handleWallCollision();
+  handleSideWalls();
   resolveCollision(state.left);
   resolveCollision(state.right);
   handleGoal();
@@ -192,7 +221,12 @@ const draw = () => {
 
 const applyRemoteState = (payload) => {
   state.left = { ...state.left, ...payload.left };
-  state.right = { ...state.right, ...payload.right };
+  if (role === "guest") {
+    state.right.x = lerp(state.right.x, payload.right.x, 0.6);
+    state.right.y = lerp(state.right.y, payload.right.y, 0.6);
+  } else {
+    state.right = { ...state.right, ...payload.right };
+  }
   state.puck = { ...state.puck, ...payload.puck };
   state.scores = payload.scores;
   state.running = payload.running;
@@ -224,16 +258,27 @@ const sendState = () => {
   });
 };
 
+const sendInput = () => {
+  if (role !== "guest" || !roomCode) return;
+  const signature = `${inputState.up}${inputState.down}${inputState.left}${inputState.right}`;
+  if (signature === lastInputSignature) return;
+  lastInputSignature = signature;
+  sendMessage({ type: "input", room: roomCode, payload: inputState });
+};
+
 const loop = (time) => {
   if (role === "host") {
     if (state.running) {
       movePaddles();
       updatePuck();
     }
-    if (time - lastSent > 33) {
+    if (time - lastSent > 16) {
       sendState();
       lastSent = time;
     }
+  }
+  if (role === "guest" && state.running) {
+    moveGuestPaddleLocally();
   }
   draw();
   requestAnimationFrame(loop);
@@ -335,6 +380,9 @@ const copyShareLink = async () => {
 
 document.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
+  if (["w", "a", "s", "d", " "].includes(key)) {
+    event.preventDefault();
+  }
   if (key === " ") {
     if (role === "host") {
       state.running = !state.running;
@@ -352,11 +400,11 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (role === "guest") {
-    if (key === "arrowup") inputState.up = true;
-    if (key === "arrowdown") inputState.down = true;
-    if (key === "arrowleft") inputState.left = true;
-    if (key === "arrowright") inputState.right = true;
-    sendMessage({ type: "input", room: roomCode, payload: inputState });
+    if (key === "w") inputState.up = true;
+    if (key === "s") inputState.down = true;
+    if (key === "a") inputState.left = true;
+    if (key === "d") inputState.right = true;
+    sendInput();
   }
 });
 
@@ -370,11 +418,11 @@ document.addEventListener("keyup", (event) => {
   }
 
   if (role === "guest") {
-    if (key === "arrowup") inputState.up = false;
-    if (key === "arrowdown") inputState.down = false;
-    if (key === "arrowleft") inputState.left = false;
-    if (key === "arrowright") inputState.right = false;
-    sendMessage({ type: "input", room: roomCode, payload: inputState });
+    if (key === "w") inputState.up = false;
+    if (key === "s") inputState.down = false;
+    if (key === "a") inputState.left = false;
+    if (key === "d") inputState.right = false;
+    sendInput();
   }
 });
 
@@ -382,6 +430,8 @@ resetBtn.addEventListener("click", resetGame);
 createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
 joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
 copyLinkBtn.addEventListener("click", copyShareLink);
+
+setInterval(sendInput, 33);
 
 const params = new URLSearchParams(window.location.search);
 const roomParam = params.get("room");
