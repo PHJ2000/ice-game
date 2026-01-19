@@ -81,19 +81,23 @@ const resetGame = () => {
 };
 
 const initAudio = () => {
-  if (audioReady) return;
-  audioContext = new (window.AudioContext || window.webkitAudioContext)();
-  masterGain = audioContext.createGain();
-  masterGain.gain.value = 0.2;
-  masterGain.connect(audioContext.destination);
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioContext.createGain();
+    masterGain.gain.value = 0.25;
+    masterGain.connect(audioContext.destination);
 
-  bgOsc = audioContext.createOscillator();
-  bgGain = audioContext.createGain();
-  bgOsc.type = "triangle";
-  bgOsc.frequency.value = 110;
-  bgGain.gain.value = 0.04;
-  bgOsc.connect(bgGain).connect(masterGain);
-  bgOsc.start();
+    bgOsc = audioContext.createOscillator();
+    bgGain = audioContext.createGain();
+    bgOsc.type = "triangle";
+    bgOsc.frequency.value = 110;
+    bgGain.gain.value = 0.05;
+    bgOsc.connect(bgGain).connect(masterGain);
+    bgOsc.start();
+  }
+  if (audioContext.state === "suspended") {
+    audioContext.resume();
+  }
   audioReady = true;
 };
 
@@ -125,8 +129,8 @@ const movePaddles = () => {
 
   const hasFreshGuestPos = guestPos && performance.now() - guestPosTime < 120;
   if (hasFreshGuestPos) {
-    right.x = guestPos.x;
-    right.y = guestPos.y;
+    right.x = smoothTo(right.x, guestPos.x, 0.35);
+    right.y = smoothTo(right.y, guestPos.y, 0.35);
   } else {
     if (guestInput.up) right.y -= right.speed;
     if (guestInput.down) right.y += right.speed;
@@ -353,18 +357,9 @@ const sendState = () => {
 const sendInput = () => {
   if (role !== "guest" || !roomCode) return;
   const now = performance.now();
-  const signature = `${inputState.up}${inputState.down}${inputState.left}${inputState.right}`;
-  const dx = state.right.x - lastSentPos.x;
-  const dy = state.right.y - lastSentPos.y;
-  const moved = Math.hypot(dx, dy) > 0.6;
-  const timeOk = now - lastInputSentAt > 60;
-
-  if (signature === lastInputSignature && !moved && !timeOk) return;
-
-  lastInputSignature = signature;
+  lastInputSignature = `${inputState.up}${inputState.down}${inputState.left}${inputState.right}`;
   lastInputSentAt = now;
   lastSentPos = { x: state.right.x, y: state.right.y };
-
   sendMessage({
     type: "input",
     room: roomCode,
@@ -585,7 +580,7 @@ joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
 copyLinkBtn.addEventListener("click", copyShareLink);
 canvas.addEventListener("click", initAudio);
 
-setInterval(sendInput, 8);
+setInterval(sendInput, 16);
 
 const params = new URLSearchParams(window.location.search);
 const roomParam = params.get("room");
