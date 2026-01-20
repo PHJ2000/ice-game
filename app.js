@@ -485,7 +485,7 @@ const loop = () => {
   }
 
   // 로컬 패들 예측: 내 입력을 즉시 반영해 반응성을 확보
-  if (side && sampled) {
+  if (side && sampled && sampled.running) {
     if (!hasLocalPaddle) {
       const base = side === "left" ? sampled.left : sampled.right;
       localPaddle.x = base.x;
@@ -516,7 +516,7 @@ const loop = () => {
   }
 
   // 로컬 퍽 예측: 충돌을 즉각적으로 보여주기 위한 시각적 보정
-  if (sampled) {
+  if (sampled && sampled.running) {
     if (!hasLocalPuck) {
       localPuck.x = sampled.puck.x;
       localPuck.y = sampled.puck.y;
@@ -538,6 +538,23 @@ const loop = () => {
 
       resolveLocalPuckCollision(localPuck, localPaddle);
     }
+
+    renderState.puck = { ...renderState.puck, ...localPuck };
+  }
+
+  if (sampled && !sampled.running && side) {
+    const base = side === "left" ? sampled.left : sampled.right;
+    localPaddle.x = base.x;
+    localPaddle.y = base.y;
+    localPaddle.r = base.r;
+    hasLocalPaddle = true;
+
+    localPuck.x = sampled.puck.x;
+    localPuck.y = sampled.puck.y;
+    localPuck.r = sampled.puck.r;
+    localPuck.vx = sampled.puck.vx;
+    localPuck.vy = sampled.puck.vy;
+    hasLocalPuck = true;
 
     renderState.puck = { ...renderState.puck, ...localPuck };
   }
