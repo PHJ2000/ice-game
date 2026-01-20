@@ -160,7 +160,7 @@ const sendInput = () => {
 
 // 스냅샷 저장
 const pushSnapshot = (payload) => {
-  snapshots.push({ time: payload.time, state: payload });
+  snapshots.push({ time: performance.now(), state: payload });
   while (snapshots.length > MAX_SNAPSHOTS) {
     snapshots.shift();
   }
@@ -449,9 +449,8 @@ const loop = () => {
   const perfNow = performance.now();
   const localDt = Math.min((perfNow - lastLocalUpdateAt) / 16.6667, 3);
   lastLocalUpdateAt = perfNow;
-  const now = Date.now();
   const adaptiveBuffer = Math.max(BASE_BUFFER_MS, Math.round((pingMs ?? 0) * 0.5));
-  const renderTime = now - adaptiveBuffer;
+  const renderTime = perfNow - adaptiveBuffer;
 
   frameCounter += 1;
   if (perfNow - fpsLastAt >= 500) {
