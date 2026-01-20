@@ -26,6 +26,7 @@ const BOUNDS = {
 };
 const PADDLE_SPEED = 6.4;
 const PUCK_FRICTION = 0.998;
+const INPUT_BUFFER_MS = 30;
 
 // 렌더 상태
 const renderState = {
@@ -64,6 +65,10 @@ let hasLocalPaddle = false;
 let lastLocalUpdateAt = performance.now();
 const localPuck = { x: 450, y: 260, r: 16, vx: 0, vy: 0 };
 let hasLocalPuck = false;
+
+// 입력 히스토리(시간축 보정용)
+const inputHistory = [];
+const MAX_INPUT_HISTORY = 60;
 
 // FPS
 let frameCounter = 0;
@@ -118,6 +123,17 @@ const resolveLocalPuckCollision = (puck, paddle) => {
     return true;
   }
   return false;
+};
+
+// 입력 상태를 시간축에 맞게 추출
+const getInputAt = (targetTime) => {
+  if (inputHistory.length === 0) return { ...inputState };
+  for (let i = inputHistory.length - 1; i >= 0; i -= 1) {
+    if (inputHistory[i].time <= targetTime) {
+      return inputHistory[i].state;
+    }
+  }
+  return inputHistory[0].state;
 };
 
 // 오디오 초기화/효과음
@@ -176,6 +192,10 @@ const sendPing = () => {
 // 게스트 입력 전송
 const sendInput = () => {
   if (!role || !roomCode) return;
+  inputHistory.push({ time: Date.now(), state: { ...inputState } });
+  while (inputHistory.length > MAX_INPUT_HISTORY) {
+    inputHistory.shift();
+  }
   sendMessage({
     type: "input",
     room: roomCode,
@@ -419,6 +439,10 @@ document.addEventListener("keydown", (event) => {
   if (key === "s") inputState.down = true;
   if (key === "a") inputState.left = true;
   if (key === "d") inputState.right = true;
+  inputHistory.push({ time: Date.now(), state: { ...inputState } });
+  while (inputHistory.length > MAX_INPUT_HISTORY) {
+    inputHistory.shift();
+  }
   sendInput();
 });
 
@@ -428,6 +452,10 @@ document.addEventListener("keyup", (event) => {
   if (key === "s") inputState.down = false;
   if (key === "a") inputState.left = false;
   if (key === "d") inputState.right = false;
+  inputHistory.push({ time: Date.now(), state: { ...inputState } });
+  while (inputHistory.length > MAX_INPUT_HISTORY) {
+    inputHistory.shift();
+  }
   sendInput();
 });
 
@@ -439,6 +467,7 @@ const loop = () => {
   const now = Date.now();
   const adaptiveBuffer = Math.max(BASE_BUFFER_MS, Math.round((pingMs ?? 0) * 0.5));
   const renderTime = now - adaptiveBuffer;
+  const inputTime = renderTime - INPUT_BUFFER_MS;
 
   frameCounter += 1;
   if (perfNow - fpsLastAt >= 500) {
@@ -464,11 +493,12 @@ const loop = () => {
       hasLocalPaddle = true;
     }
 
+    const pastInput = getInputAt(inputTime);
     const step = PADDLE_SPEED * localDt;
-    if (inputState.up) localPaddle.y -= step;
-    if (inputState.down) localPaddle.y += step;
-    if (inputState.left) localPaddle.x -= step;
-    if (inputState.right) localPaddle.x += step;
+    if (pastInput.up) localPaddle.y -= step;
+    if (pastInput.down) localPaddle.y += step;
+    if (pastInput.left) localPaddle.x -= step;
+    if (pastInput.right) localPaddle.x += step;
 
     if (side === "left") {
       localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - 40);
@@ -480,12 +510,12 @@ const loop = () => {
     // 보정은 "같은 시간대(버퍼된 스냅샷)" 기준으로만 적용
     const auth = side === "left" ? sampled.left : sampled.right;
     const error = distance(localPaddle, auth);
-    if (error > 50) {
+    if (error > 65) {
       localPaddle.x = auth.x;
       localPaddle.y = auth.y;
     } else {
-      localPaddle.x = lerp(localPaddle.x, auth.x, 0.18);
-      localPaddle.y = lerp(localPaddle.y, auth.y, 0.18);
+      localPaddle.x = lerp(localPaddle.x, auth.x, 0.14);
+      localPaddle.y = lerp(localPaddle.y, auth.y, 0.14);
     }
 
     if (side === "left") {
@@ -516,11 +546,7 @@ const loop = () => {
 
       handleLocalPuckWalls(localPuck);
 
-      if (side === "left") {
-        resolveLocalPuckCollision(localPuck, localPaddle);
-      } else if (side === "right") {
-        resolveLocalPuckCollision(localPuck, localPaddle);
-      }
+      resolveLocalPuckCollision(localPuck, localPaddle);
     }
 
     // 같은 시간대 스냅샷으로만 보정
