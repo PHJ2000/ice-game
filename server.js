@@ -69,6 +69,11 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    if (message.type === "ping") {
+      send(ws, { type: "pong", at: message.at });
+      return;
+    }
+
     if (message.type === "join") {
       const roomCode = String(message.room || "").toUpperCase();
       if (!roomCode) return;

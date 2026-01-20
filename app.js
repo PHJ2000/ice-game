@@ -5,6 +5,7 @@ const resetBtn = document.getElementById("resetBtn");
 const statusText = document.getElementById("statusText");
 const scoreLeftEl = document.getElementById("scoreLeft");
 const scoreRightEl = document.getElementById("scoreRight");
+const pingValueEl = document.getElementById("pingValue");
 const roomInput = document.getElementById("roomInput");
 const createBtn = document.getElementById("createBtn");
 const joinBtn = document.getElementById("joinBtn");
@@ -56,6 +57,8 @@ let bgm;
 let lastScoreLeft = 0;
 let lastScoreRight = 0;
 let guestLocal = { x: state.right.x, y: state.right.y };
+let lastPingSentAt = 0;
+let pingMs = null;
 
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -363,6 +366,13 @@ const sendMessage = (data) => {
   }
 };
 
+// 핑 측정(왕복 지연)
+const sendPing = () => {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  lastPingSentAt = performance.now();
+  sendMessage({ type: "ping", at: lastPingSentAt });
+};
+
 // 호스트 상태 브로드캐스트
 const sendState = () => {
   if (role !== "host") return;
@@ -443,10 +453,16 @@ const connect = () => {
     if (roomCode) {
       sendMessage({ type: "join", room: roomCode });
     }
+    sendPing();
   });
 
   socket.addEventListener("message", (event) => {
     const message = JSON.parse(event.data);
+    if (message.type === "pong") {
+      pingMs = Math.max(0, Math.round(performance.now() - message.at));
+      pingValueEl.textContent = `${pingMs}ms`;
+      return;
+    }
     if (message.type === "role") {
       role = message.role;
       setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
@@ -596,6 +612,7 @@ canvas.addEventListener("click", initAudio);
 document.addEventListener("pointerdown", initAudio);
 
 setInterval(sendInput, 16);
+setInterval(sendPing, 1000);
 
 const params = new URLSearchParams(window.location.search);
 const roomParam = params.get("room");
@@ -608,10 +625,6 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
-
-
-
-
 
 
 
