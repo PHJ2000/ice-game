@@ -54,6 +54,7 @@ let lastPingSentAt = 0;
 let pingMs = null;
 let lastFrameTime = performance.now();
 let guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
+let guestSnapNeeded = false;
 
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -87,6 +88,7 @@ const resetGame = () => {
   targetState = null;
   renderRight = { x: state.right.x, y: state.right.y, r: state.right.r };
   guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
+  guestSnapNeeded = false;
   resetRound();
   sendState();
 };
@@ -332,7 +334,9 @@ const applyRemoteState = (payload) => {
     state.scores = payload.scores;
     state.running = payload.running;
     state.status = payload.status;
-    guestRender = { ...payload.right };
+    const dx = payload.right.x - guestRender.x;
+    const dy = payload.right.y - guestRender.y;
+    guestSnapNeeded = Math.hypot(dx, dy) > 40;
   } else {
     state.left = { ...state.left, ...payload.left };
     state.right = { ...state.right, ...payload.right };
@@ -416,8 +420,11 @@ const loop = (time) => {
 
   if (role === "guest" && targetState) {
     moveGuestRender(inputState, delta);
-    guestRender.x = smoothTo(guestRender.x, targetState.right.x, 0.4, 0);
-    guestRender.y = smoothTo(guestRender.y, targetState.right.y, 0.4, 0);
+    if (guestSnapNeeded) {
+      guestRender.x = targetState.right.x;
+      guestRender.y = targetState.right.y;
+      guestSnapNeeded = false;
+    }
     guestRender.r = targetState.right.r;
     state.left = { ...state.left, ...targetState.left };
     state.right = { ...state.right, ...targetState.right };
