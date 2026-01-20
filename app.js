@@ -16,7 +16,7 @@ const debugText = document.getElementById("debugText");
 // 입력/상수
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
-const BASE_BUFFER_MS = 10;
+const BASE_BUFFER_MS = 80;
 const ARENA = { width: 900, height: 520 };
 const BOUNDS = {
   minX: 40,
@@ -25,7 +25,6 @@ const BOUNDS = {
   maxY: ARENA.height - 40,
 };
 const PADDLE_SPEED = 6.4;
-const INPUT_BUFFER_MS = 0;
 
 // 렌더 상태
 const renderState = {
@@ -43,6 +42,10 @@ let lastSentAt = 0;
 let lastStateAt = 0;
 let lastGuestInputAt = 0;
 let authoritativeState = null;
+let inputSeq = 0;
+let lastInputSentAt = performance.now();
+let pendingInputs = [];
+const MAX_PENDING_INPUTS = 120;
 
 // 오디오
 let audioReady = false;
@@ -63,10 +66,6 @@ const localPaddle = { x: 140, y: 260, r: 26 };
 let hasLocalPaddle = false;
 let lastLocalUpdateAt = performance.now();
 
-// 입력 히스토리(시간축 보정용)
-const inputHistory = [];
-const MAX_INPUT_HISTORY = 60;
-
 // FPS
 let frameCounter = 0;
 let fps = 0;
@@ -75,20 +74,16 @@ let fpsLastAt = performance.now();
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
-const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const hasAnyInput = (state) => state.up || state.down || state.left || state.right;
 
 // 로컬 예측은 패들만 사용하고, 퍽은 서버 권위 상태로 그린다.
 
-// 입력 상태를 시간축에 맞게 추출
-const getInputAt = (targetTime) => {
-  if (inputHistory.length === 0) return { ...inputState };
-  for (let i = inputHistory.length - 1; i >= 0; i -= 1) {
-    if (inputHistory[i].time <= targetTime) {
-      return inputHistory[i].state;
-    }
-  }
-  return inputHistory[0].state;
+// 패들 입력을 고정 틱 비율로 적용
+const applyInputLocal = (paddle, input, dtScale) => {
+  const speed = PADDLE_SPEED * dtScale;
+  if (input.up) paddle.y -= speed;
+  if (input.down) paddle.y += speed;
+  if (input.left) paddle.x -= speed;
+  if (input.right) paddle.x += speed;
 };
 
 // 오디오 초기화/효과음
@@ -147,14 +142,18 @@ const sendPing = () => {
 // 게스트 입력 전송
 const sendInput = () => {
   if (!role || !roomCode) return;
-  inputHistory.push({ time: Date.now(), state: { ...inputState } });
-  while (inputHistory.length > MAX_INPUT_HISTORY) {
-    inputHistory.shift();
+  const now = performance.now();
+  const dtMs = Math.max(1, now - lastInputSentAt);
+  lastInputSentAt = now;
+  inputSeq += 1;
+  pendingInputs.push({ seq: inputSeq, state: { ...inputState }, dtMs });
+  while (pendingInputs.length > MAX_PENDING_INPUTS) {
+    pendingInputs.shift();
   }
   sendMessage({
     type: "input",
     room: roomCode,
-    payload: { input: { ...inputState } },
+    payload: { input: { ...inputState }, seq: inputSeq, dtMs },
   });
 };
 
@@ -210,6 +209,36 @@ const sampleState = (renderTime) => {
       vy: b.puck.vy,
     },
   };
+};
+
+// 서버 ack 기반 리컨실리에이션
+const reconcileLocalPaddle = (payload) => {
+  if (!side || !payload || !payload.acks) return;
+  const ackSeq = payload.acks[side];
+  if (!Number.isFinite(ackSeq)) return;
+
+  const auth = side === "left" ? payload.left : payload.right;
+  localPaddle.x = auth.x;
+  localPaddle.y = auth.y;
+  localPaddle.r = auth.r;
+
+  const remaining = [];
+  for (const entry of pendingInputs) {
+    if (entry.seq > ackSeq) {
+      const dtScale = clamp(entry.dtMs / 16.6667, 0.25, 3);
+      applyInputLocal(localPaddle, entry.state, dtScale);
+      remaining.push(entry);
+    }
+  }
+  pendingInputs = remaining;
+
+  if (side === "left") {
+    localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - 40);
+  } else {
+    localPaddle.x = clamp(localPaddle.x, ARENA.width / 2 + 40, BOUNDS.maxX);
+  }
+  localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
+  hasLocalPaddle = true;
 };
 
 // 렌더링
@@ -284,6 +313,10 @@ const connect = () => {
     if (message.type === "role") {
       role = message.role;
       side = message.side;
+      inputSeq = 0;
+      pendingInputs = [];
+      lastInputSentAt = performance.now();
+      hasLocalPaddle = false;
       setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
       statusText.textContent =
         role === "host" ? "게스트 대기 중. 스페이스로 시작!" : "호스트가 시작하면 게임 시작.";
@@ -314,6 +347,7 @@ const connect = () => {
       lastStateAt = performance.now();
       authoritativeState = message.payload;
       pushSnapshot(message.payload);
+      reconcileLocalPaddle(message.payload);
       scoreLeftEl.textContent = message.payload.scores.left.toString();
       scoreRightEl.textContent = message.payload.scores.right.toString();
       statusText.textContent = message.payload.status;
@@ -394,10 +428,6 @@ document.addEventListener("keydown", (event) => {
   if (key === "s") inputState.down = true;
   if (key === "a") inputState.left = true;
   if (key === "d") inputState.right = true;
-  inputHistory.push({ time: Date.now(), state: { ...inputState } });
-  while (inputHistory.length > MAX_INPUT_HISTORY) {
-    inputHistory.shift();
-  }
   sendInput();
 });
 
@@ -407,10 +437,6 @@ document.addEventListener("keyup", (event) => {
   if (key === "s") inputState.down = false;
   if (key === "a") inputState.left = false;
   if (key === "d") inputState.right = false;
-  inputHistory.push({ time: Date.now(), state: { ...inputState } });
-  while (inputHistory.length > MAX_INPUT_HISTORY) {
-    inputHistory.shift();
-  }
   sendInput();
 });
 
@@ -422,7 +448,6 @@ const loop = () => {
   const now = Date.now();
   const adaptiveBuffer = Math.max(BASE_BUFFER_MS, Math.round((pingMs ?? 0) * 0.5));
   const renderTime = now - adaptiveBuffer;
-  const inputTime = renderTime - INPUT_BUFFER_MS;
 
   frameCounter += 1;
   if (perfNow - fpsLastAt >= 500) {
@@ -448,12 +473,11 @@ const loop = () => {
       hasLocalPaddle = true;
     }
 
-    const pastInput = getInputAt(inputTime);
     const step = PADDLE_SPEED * localDt;
-    if (pastInput.up) localPaddle.y -= step;
-    if (pastInput.down) localPaddle.y += step;
-    if (pastInput.left) localPaddle.x -= step;
-    if (pastInput.right) localPaddle.x += step;
+    if (inputState.up) localPaddle.y -= step;
+    if (inputState.down) localPaddle.y += step;
+    if (inputState.left) localPaddle.x -= step;
+    if (inputState.right) localPaddle.x += step;
 
     if (side === "left") {
       localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - 40);
@@ -461,17 +485,6 @@ const loop = () => {
       localPaddle.x = clamp(localPaddle.x, ARENA.width / 2 + 40, BOUNDS.maxX);
     }
     localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
-
-    // 서버 스냅샷 보정은 최소화해서 되돌림을 줄인다
-    const auth = side === "left" ? sampled.left : sampled.right;
-    const error = distance(localPaddle, auth);
-    if (error > 220) {
-      localPaddle.x = auth.x;
-      localPaddle.y = auth.y;
-    } else {
-      localPaddle.x = lerp(localPaddle.x, auth.x, 0.04);
-      localPaddle.y = lerp(localPaddle.y, auth.y, 0.04);
-    }
 
     if (side === "left") {
       renderState.left = { ...renderState.left, x: localPaddle.x, y: localPaddle.y };

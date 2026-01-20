@@ -228,6 +228,7 @@ const ensureRoomLoop = (room) => {
       running: state.running,
       status: state.status,
       events,
+      acks: { left: room.lastSeq.left, right: room.lastSeq.right },
       time: Date.now(),
     };
     broadcast(room, { type: "state", payload });
@@ -266,6 +267,7 @@ wss.on("connection", (ws) => {
             left: { up: false, down: false, left: false, right: false },
             right: { up: false, down: false, left: false, right: false },
           },
+          lastSeq: { left: 0, right: 0 },
           timer: null,
         };
         rooms.set(roomCode, room);
@@ -296,6 +298,9 @@ wss.on("connection", (ws) => {
 
     if (message.type === "input" && message.payload && message.payload.input) {
       room.inputs[ws.side] = message.payload.input;
+      if (typeof message.payload.seq === "number" && message.payload.seq > room.lastSeq[ws.side]) {
+        room.lastSeq[ws.side] = message.payload.seq;
+      }
       if (ws.side === "right") {
         const host = room.clients.get(room.hostId);
         if (host) send(host, { type: "guest-input" });
