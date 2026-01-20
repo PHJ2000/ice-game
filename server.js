@@ -62,8 +62,8 @@ const broadcast = (room, payload) => {
 
 // 초기 게임 상태
 const createState = () => ({
-  left: { x: 140, y: 260, r: 26, speed: 6.4 },
-  right: { x: 760, y: 260, r: 26, speed: 6.4 },
+  left: { x: 140, y: 260, r: 26, speed: 6.4, vx: 0, vy: 0 },
+  right: { x: 760, y: 260, r: 26, speed: 6.4, vx: 0, vy: 0 },
   puck: { x: 450, y: 260, r: 16, vx: 6.2, vy: 3.6 },
   scores: { left: 0, right: 0 },
   running: false,
@@ -78,6 +78,13 @@ const bounds = {
 };
 
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+const clampAbs = (value, maxAbs) => clamp(value, -maxAbs, maxAbs);
+
+const MAX_PADDLE_SPEED = 8.5;
+const MAX_PUCK_SPEED = 18;
+const RESTITUTION = 0.92;
+const TRANSFER = 0.75;
+const EPSILON = 0.5;
 
 // 입력을 패들 위치에 반영
 const applyInput = (paddle, input, scale = 1) => {
@@ -128,7 +135,7 @@ const handleSideWalls = (puck) => {
   return wall;
 };
 
-// 퍽-패들 충돌 처리
+// 퍽-패들 충돌 처리 (패들 속도 반영)
 const resolveCollision = (puck, paddle) => {
   const dx = puck.x - paddle.x;
   const dy = puck.y - paddle.y;
@@ -136,12 +143,33 @@ const resolveCollision = (puck, paddle) => {
   const minDist = puck.r + paddle.r;
 
   if (dist < minDist) {
-    const angle = Math.atan2(dy, dx);
-    puck.x = paddle.x + Math.cos(angle) * minDist;
-    puck.y = paddle.y + Math.sin(angle) * minDist;
-    const speed = Math.hypot(puck.vx, puck.vy) + 2.2;
-    puck.vx = Math.cos(angle) * speed;
-    puck.vy = Math.sin(angle) * speed;
+    const nx = dx / dist;
+    const ny = dy / dist;
+
+    // 패들 속도를 상대속도에 반영
+    const vRelx = puck.vx - TRANSFER * paddle.vx;
+    const vRely = puck.vy - TRANSFER * paddle.vy;
+    const vn = vRelx * nx + vRely * ny;
+
+    // 서로 접근 중일 때만 반사
+    if (vn < 0) {
+      const j = -(1 + RESTITUTION) * vn;
+      const vRelx2 = vRelx + j * nx;
+      const vRely2 = vRely + j * ny;
+      puck.vx = vRelx2 + TRANSFER * paddle.vx;
+      puck.vy = vRely2 + TRANSFER * paddle.vy;
+    }
+
+    // 겹침 해소
+    puck.x = paddle.x + nx * (minDist + EPSILON);
+    puck.y = paddle.y + ny * (minDist + EPSILON);
+
+    // 퍽 속도 상한
+    const speed = Math.hypot(puck.vx, puck.vy);
+    if (speed > MAX_PUCK_SPEED) {
+      puck.vx = (puck.vx / speed) * MAX_PUCK_SPEED;
+      puck.vy = (puck.vy / speed) * MAX_PUCK_SPEED;
+    }
     return true;
   }
   return false;
@@ -168,6 +196,9 @@ const stepRoom = (room) => {
     return { state, events };
   }
 
+  const prevLeft = { x: state.left.x, y: state.left.y };
+  const prevRight = { x: state.right.x, y: state.right.y };
+
   applyInput(state.left, room.inputs.left);
   applyInput(state.right, room.inputs.right);
 
@@ -176,8 +207,15 @@ const stepRoom = (room) => {
   state.right.x = clamp(state.right.x, 900 / 2 + 40, bounds.maxX);
   state.right.y = clamp(state.right.y, bounds.minY, bounds.maxY);
 
+  // 패들 속도 계산(한 틱 기준) + 클램프
+  state.left.vx = clampAbs(state.left.x - prevLeft.x, MAX_PADDLE_SPEED);
+  state.left.vy = clampAbs(state.left.y - prevLeft.y, MAX_PADDLE_SPEED);
+  state.right.vx = clampAbs(state.right.x - prevRight.x, MAX_PADDLE_SPEED);
+  state.right.vy = clampAbs(state.right.y - prevRight.y, MAX_PADDLE_SPEED);
+
   const puck = state.puck;
-  const steps = 3;
+  const speedNow = Math.hypot(puck.vx, puck.vy);
+  const steps = clamp(Math.ceil(speedNow / 6), 3, 8);
   for (let i = 0; i < steps; i += 1) {
     puck.x += puck.vx / steps;
     puck.y += puck.vy / steps;
