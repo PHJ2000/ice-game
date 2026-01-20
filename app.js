@@ -16,7 +16,7 @@ const debugText = document.getElementById("debugText");
 // 입력/상수
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
-const BUFFER_MS = 100;
+const BASE_BUFFER_MS = 50;
 const ARENA = { width: 900, height: 520 };
 const BOUNDS = {
   minX: 40,
@@ -25,6 +25,7 @@ const BOUNDS = {
   maxY: ARENA.height - 40,
 };
 const PADDLE_SPEED = 5.5;
+const PUCK_FRICTION = 0.995;
 
 // 렌더 상태
 const renderState = {
@@ -61,6 +62,8 @@ const MAX_SNAPSHOTS = 20;
 const localPaddle = { x: 140, y: 260, r: 26 };
 let hasLocalPaddle = false;
 let lastLocalUpdateAt = performance.now();
+const localPuck = { x: 450, y: 260, r: 16, vx: 0, vy: 0 };
+let hasLocalPuck = false;
 
 // FPS
 let frameCounter = 0;
@@ -71,6 +74,51 @@ let fpsLastAt = performance.now();
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+// 목표 구간 계산
+const goalHeight = 140;
+const goalTop = ARENA.height / 2 - goalHeight / 2;
+const goalBottom = ARENA.height / 2 + goalHeight / 2;
+
+// 로컬 퍽 벽 처리
+const handleLocalPuckWalls = (puck) => {
+  if (puck.y - puck.r <= BOUNDS.minY) {
+    puck.y = BOUNDS.minY + puck.r;
+    puck.vy = Math.abs(puck.vy);
+  }
+  if (puck.y + puck.r >= BOUNDS.maxY) {
+    puck.y = BOUNDS.maxY - puck.r;
+    puck.vy = -Math.abs(puck.vy);
+  }
+
+  const inGoalY = puck.y > goalTop && puck.y < goalBottom;
+  if (!inGoalY && puck.x - puck.r <= BOUNDS.minX) {
+    puck.x = BOUNDS.minX + puck.r;
+    puck.vx = Math.abs(puck.vx);
+  }
+  if (!inGoalY && puck.x + puck.r >= BOUNDS.maxX) {
+    puck.x = BOUNDS.maxX - puck.r;
+    puck.vx = -Math.abs(puck.vx);
+  }
+};
+
+// 로컬 패들-퍽 충돌 예측(시각적 반응용)
+const resolveLocalPuckCollision = (puck, paddle) => {
+  const dx = puck.x - paddle.x;
+  const dy = puck.y - paddle.y;
+  const dist = Math.hypot(dx, dy);
+  const minDist = puck.r + paddle.r;
+  if (dist < minDist) {
+    const angle = Math.atan2(dy, dx);
+    puck.x = paddle.x + Math.cos(angle) * minDist;
+    puck.y = paddle.y + Math.sin(angle) * minDist;
+    const speed = Math.hypot(puck.vx, puck.vy) + 0.8;
+    puck.vx = Math.cos(angle) * speed;
+    puck.vy = Math.sin(angle) * speed;
+    return true;
+  }
+  return false;
+};
 
 // 오디오 초기화/효과음
 const initAudio = () => {
@@ -389,7 +437,8 @@ const loop = () => {
   const localDt = Math.min((perfNow - lastLocalUpdateAt) / 16.6667, 3);
   lastLocalUpdateAt = perfNow;
   const now = Date.now();
-  const renderTime = now - BUFFER_MS;
+  const adaptiveBuffer = Math.max(BASE_BUFFER_MS, Math.round((pingMs ?? 0) * 0.5));
+  const renderTime = now - adaptiveBuffer;
 
   frameCounter += 1;
   if (perfNow - fpsLastAt >= 500) {
@@ -448,6 +497,54 @@ const loop = () => {
     }
   }
 
+  // 로컬 퍽 예측: 충돌을 즉각적으로 보여주기 위한 시각적 보정
+  if (sampled) {
+    if (!hasLocalPuck) {
+      localPuck.x = sampled.puck.x;
+      localPuck.y = sampled.puck.y;
+      localPuck.r = sampled.puck.r;
+      localPuck.vx = sampled.puck.vx;
+      localPuck.vy = sampled.puck.vy;
+      hasLocalPuck = true;
+    }
+
+    const subSteps = 2;
+    for (let i = 0; i < subSteps; i += 1) {
+      localPuck.x += (localPuck.vx * localDt) / subSteps;
+      localPuck.y += (localPuck.vy * localDt) / subSteps;
+      const friction = Math.pow(PUCK_FRICTION, localDt / subSteps);
+      localPuck.vx *= friction;
+      localPuck.vy *= friction;
+
+      handleLocalPuckWalls(localPuck);
+
+      if (side === "left") {
+        resolveLocalPuckCollision(localPuck, localPaddle);
+      } else if (side === "right") {
+        resolveLocalPuckCollision(localPuck, localPaddle);
+      }
+    }
+
+    // 서버 상태로 천천히 복귀
+    if (authoritativeState) {
+      const authPuck = authoritativeState.puck;
+      const puckError = distance(localPuck, authPuck);
+      if (puckError > 80) {
+        localPuck.x = authPuck.x;
+        localPuck.y = authPuck.y;
+        localPuck.vx = authPuck.vx;
+        localPuck.vy = authPuck.vy;
+      } else {
+        localPuck.x = lerp(localPuck.x, authPuck.x, 0.2);
+        localPuck.y = lerp(localPuck.y, authPuck.y, 0.2);
+        localPuck.vx = lerp(localPuck.vx, authPuck.vx, 0.2);
+        localPuck.vy = lerp(localPuck.vy, authPuck.vy, 0.2);
+      }
+    }
+
+    renderState.puck = { ...renderState.puck, ...localPuck };
+  }
+
   draw();
 
   if (debugText) {
@@ -459,7 +556,7 @@ const loop = () => {
       `FPS: ${fps} / 핑: ${pingMs ?? "-"}ms\n` +
       `게스트 입력 수신: ${sinceGuestInput}ms 전\n` +
       `상태 수신: ${sinceState}ms 전\n` +
-      `스냅샷 버퍼: ${snapshots.length}개`;
+      `스냅샷 버퍼: ${snapshots.length}개 / 지연: ${adaptiveBuffer}ms`;
   }
 
   requestAnimationFrame(loop);
