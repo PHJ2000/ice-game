@@ -69,7 +69,6 @@ let hasLocalPuck = false;
 // 입력 히스토리(시간축 보정용)
 const inputHistory = [];
 const MAX_INPUT_HISTORY = 60;
-let lastInputAt = Date.now();
 
 // FPS
 let frameCounter = 0;
@@ -198,7 +197,6 @@ const sendInput = () => {
   while (inputHistory.length > MAX_INPUT_HISTORY) {
     inputHistory.shift();
   }
-  lastInputAt = Date.now();
   sendMessage({
     type: "input",
     room: roomCode,
@@ -446,7 +444,6 @@ document.addEventListener("keydown", (event) => {
   while (inputHistory.length > MAX_INPUT_HISTORY) {
     inputHistory.shift();
   }
-  lastInputAt = Date.now();
   sendInput();
 });
 
@@ -460,7 +457,6 @@ document.addEventListener("keyup", (event) => {
   while (inputHistory.length > MAX_INPUT_HISTORY) {
     inputHistory.shift();
   }
-  lastInputAt = Date.now();
   sendInput();
 });
 
@@ -512,20 +508,6 @@ const loop = () => {
     }
     localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
 
-    // 보정은 "같은 시간대(버퍼된 스냅샷)" 기준으로만 적용
-    const auth = side === "left" ? sampled.left : sampled.right;
-    const error = distance(localPaddle, auth);
-    const idleMs = perfNow - lastInputAt;
-    const isIdle = idleMs > 140;
-    if (isIdle && error > 120) {
-      localPaddle.x = auth.x;
-      localPaddle.y = auth.y;
-    } else {
-      const settle = isIdle ? 0.2 : 0.05;
-      localPaddle.x = lerp(localPaddle.x, auth.x, settle);
-      localPaddle.y = lerp(localPaddle.y, auth.y, settle);
-    }
-
     if (side === "left") {
       renderState.left = { ...renderState.left, x: localPaddle.x, y: localPaddle.y };
     } else {
@@ -555,21 +537,6 @@ const loop = () => {
       handleLocalPuckWalls(localPuck);
 
       resolveLocalPuckCollision(localPuck, localPaddle);
-    }
-
-    // 같은 시간대 스냅샷으로만 보정
-    const authPuck = sampled.puck;
-    const puckError = distance(localPuck, authPuck);
-    if (puckError > 120) {
-      localPuck.x = authPuck.x;
-      localPuck.y = authPuck.y;
-      localPuck.vx = authPuck.vx;
-      localPuck.vy = authPuck.vy;
-    } else {
-      localPuck.x = lerp(localPuck.x, authPuck.x, 0.15);
-      localPuck.y = lerp(localPuck.y, authPuck.y, 0.15);
-      localPuck.vx = lerp(localPuck.vx, authPuck.vx, 0.15);
-      localPuck.vy = lerp(localPuck.vy, authPuck.vy, 0.15);
     }
 
     renderState.puck = { ...renderState.puck, ...localPuck };
