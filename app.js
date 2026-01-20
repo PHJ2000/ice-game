@@ -69,6 +69,7 @@ let hasLocalPuck = false;
 // 입력 히스토리(시간축 보정용)
 const inputHistory = [];
 const MAX_INPUT_HISTORY = 60;
+let lastInputAt = Date.now();
 
 // FPS
 let frameCounter = 0;
@@ -197,6 +198,7 @@ const sendInput = () => {
   while (inputHistory.length > MAX_INPUT_HISTORY) {
     inputHistory.shift();
   }
+  lastInputAt = Date.now();
   sendMessage({
     type: "input",
     room: roomCode,
@@ -444,6 +446,7 @@ document.addEventListener("keydown", (event) => {
   while (inputHistory.length > MAX_INPUT_HISTORY) {
     inputHistory.shift();
   }
+  lastInputAt = Date.now();
   sendInput();
 });
 
@@ -457,6 +460,7 @@ document.addEventListener("keyup", (event) => {
   while (inputHistory.length > MAX_INPUT_HISTORY) {
     inputHistory.shift();
   }
+  lastInputAt = Date.now();
   sendInput();
 });
 
@@ -511,13 +515,15 @@ const loop = () => {
     // 보정은 "같은 시간대(버퍼된 스냅샷)" 기준으로만 적용
     const auth = side === "left" ? sampled.left : sampled.right;
     const error = distance(localPaddle, auth);
-    const allowSnap = !hasAnyInput(pastInput);
-    if (allowSnap && error > 90) {
+    const idleMs = perfNow - lastInputAt;
+    const isIdle = idleMs > 140;
+    if (isIdle && error > 120) {
       localPaddle.x = auth.x;
       localPaddle.y = auth.y;
-    } else if (!hasAnyInput(pastInput)) {
-      localPaddle.x = lerp(localPaddle.x, auth.x, 0.08);
-      localPaddle.y = lerp(localPaddle.y, auth.y, 0.08);
+    } else {
+      const settle = isIdle ? 0.2 : 0.05;
+      localPaddle.x = lerp(localPaddle.x, auth.x, settle);
+      localPaddle.y = lerp(localPaddle.y, auth.y, settle);
     }
 
     if (side === "left") {
