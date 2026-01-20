@@ -16,7 +16,6 @@ const connectionStatus = document.getElementById("connectionStatus");
 const keys = new Set();
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
-const guestInput = { up: false, down: false, left: false, right: false };
 
 // 게임 상태
 const state = {
@@ -41,13 +40,7 @@ let socket;
 let role = null;
 let roomCode = "";
 let lastSent = 0;
-let lastInputSignature = "";
-let lastInputSentAt = 0;
-let lastSentPos = { x: 0, y: 0 };
 let targetState = null;
-let targetStateTime = 0;
-let guestPos = null;
-let guestPosTime = 0;
 let renderRight = { x: state.right.x, y: state.right.y, r: state.right.r };
 // 오디오
 let audioReady = false;
@@ -56,9 +49,18 @@ let masterGain;
 let bgm;
 let lastScoreLeft = 0;
 let lastScoreRight = 0;
-let guestLocal = { x: state.right.x, y: state.right.y };
 let lastPingSentAt = 0;
 let pingMs = null;
+// 락스텝 동기화
+const TICK_MS = 50;
+let tick = 0;
+let tickAccumulator = 0;
+let lastFrameTime = performance.now();
+let hostInputBuffer = new Map();
+let guestInputBuffer = new Map();
+let lastHostInput = { up: false, down: false, left: false, right: false };
+let lastGuestInput = { up: false, down: false, left: false, right: false };
+let targetTick = 0;
 
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -74,9 +76,6 @@ const resetRound = (direction = 1) => {
   state.left.y = 260;
   state.right.x = 760;
   state.right.y = 260;
-  if (role === "guest") {
-    guestLocal = { x: state.right.x, y: state.right.y };
-  }
   state.puck.x = canvas.width / 2;
   state.puck.y = canvas.height / 2;
   state.puck.vx = 4 * direction;
@@ -91,6 +90,14 @@ const resetGame = () => {
   state.running = false;
   state.status = "스페이스를 누르면 시작!";
   statusText.textContent = state.status;
+  tick = 0;
+  tickAccumulator = 0;
+  lastFrameTime = performance.now();
+  hostInputBuffer.clear();
+  guestInputBuffer.clear();
+  lastHostInput = { up: false, down: false, left: false, right: false };
+  lastGuestInput = { up: false, down: false, left: false, right: false };
+  targetTick = 0;
   resetRound();
   sendState();
 };
@@ -134,53 +141,32 @@ const playWall = () => playTone(360, 0.08, 0.12);
 const playPaddle = () => playTone(520, 0.09, 0.18);
 const playGoal = () => playTone(220, 0.22, 0.3);
 
-// 입력으로 패들 이동(호스트)
-const movePaddles = () => {
-  const left = state.left;
-  const right = state.right;
+// 입력 스냅샷 생성
+const getInputSnapshot = () => ({
+  up: inputState.up,
+  down: inputState.down,
+  left: inputState.left,
+  right: inputState.right,
+});
 
-  if (inputState.up) left.y -= left.speed;
-  if (inputState.down) left.y += left.speed;
-  if (inputState.left) left.x -= left.speed;
-  if (inputState.right) left.x += left.speed;
+// 입력을 패들에 적용(락스텝)
+const applyInputToPaddle = (paddle, input) => {
+  if (input.up) paddle.y -= paddle.speed;
+  if (input.down) paddle.y += paddle.speed;
+  if (input.left) paddle.x -= paddle.speed;
+  if (input.right) paddle.x += paddle.speed;
+  return paddle;
+};
 
-  const now = performance.now();
-  const hasFreshGuestPos = guestPos && now - guestPosTime < 120;
-  if (hasFreshGuestPos) {
-    right.x = guestPos.x;
-    right.y = guestPos.y;
-  } else {
-    if (guestInput.up) right.y -= right.speed;
-    if (guestInput.down) right.y += right.speed;
-    if (guestInput.left) right.x -= right.speed;
-    if (guestInput.right) right.x += right.speed;
-  }
+// 락스텝 입력으로 패들 이동(호스트)
+const movePaddlesByInputs = (leftInput, rightInput) => {
+  const left = applyInputToPaddle(state.left, leftInput);
+  const right = applyInputToPaddle(state.right, rightInput);
 
   left.x = clamp(left.x, bounds.minX, canvas.width / 2 - 40);
   left.y = clamp(left.y, bounds.minY, bounds.maxY);
   right.x = clamp(right.x, canvas.width / 2 + 40, bounds.maxX);
   right.y = clamp(right.y, bounds.minY, bounds.maxY);
-};
-
-// 게스트 로컬 이동(입력 추적용)
-const moveGuestPaddleLocally = () => {
-  const right = state.right;
-  if (inputState.up) right.y -= right.speed;
-  if (inputState.down) right.y += right.speed;
-  if (inputState.left) right.x -= right.speed;
-  if (inputState.right) right.x += right.speed;
-  right.x = clamp(right.x, canvas.width / 2 + 40, bounds.maxX);
-  right.y = clamp(right.y, bounds.minY, bounds.maxY);
-};
-
-// 게스트 로컬 위치 갱신(전송용)
-const updateGuestLocal = () => {
-  if (inputState.up) guestLocal.y -= state.right.speed;
-  if (inputState.down) guestLocal.y += state.right.speed;
-  if (inputState.left) guestLocal.x -= state.right.speed;
-  if (inputState.right) guestLocal.x += state.right.speed;
-  guestLocal.x = clamp(guestLocal.x, canvas.width / 2 + 40, bounds.maxX);
-  guestLocal.y = clamp(guestLocal.y, bounds.minY, bounds.maxY);
 };
 
 // 벽 충돌 처리
@@ -337,10 +323,12 @@ const applyRemoteState = (payload) => {
 
   if (role === "guest") {
     targetState = payload;
-    targetStateTime = performance.now();
     state.scores = payload.scores;
     state.running = payload.running;
     state.status = payload.status;
+    if (typeof payload.tick === "number") {
+      targetTick = payload.tick + 1;
+    }
   } else {
     state.left = { ...state.left, ...payload.left };
     state.right = { ...state.right, ...payload.right };
@@ -386,6 +374,7 @@ const sendState = () => {
       scores: state.scores,
       running: state.running,
       status: state.status,
+      tick,
     },
   });
 };
@@ -393,46 +382,65 @@ const sendState = () => {
 // 게스트 입력 전송
 const sendInput = () => {
   if (role !== "guest" || !roomCode) return;
-  const now = performance.now();
-  lastInputSignature = `${inputState.up}${inputState.down}${inputState.left}${inputState.right}`;
-  lastInputSentAt = now;
-  lastSentPos = { x: guestLocal.x, y: guestLocal.y };
   sendMessage({
     type: "input",
     room: roomCode,
     payload: {
-      input: inputState,
-      pos: { x: guestLocal.x, y: guestLocal.y },
+      tick: targetTick,
+      input: getInputSnapshot(),
     },
   });
 };
 
-// 게임 루프
+// 게임 루프(락스텝)
 const loop = (time) => {
+  const delta = time - lastFrameTime;
+  lastFrameTime = time;
+  tickAccumulator += delta;
+
   if (role === "host") {
-    if (state.running) {
-      movePaddles();
+    while (tickAccumulator >= TICK_MS) {
+      if (!state.running) {
+        tickAccumulator = 0;
+        break;
+      }
+
+      if (!hostInputBuffer.has(tick)) {
+        hostInputBuffer.set(tick, getInputSnapshot());
+      }
+
+      const hostInput = hostInputBuffer.get(tick) || lastHostInput;
+      const guestInput = guestInputBuffer.get(tick);
+
+      if (!guestInput) {
+        state.status = "입력 대기 중...";
+        break;
+      }
+
+      lastHostInput = hostInput;
+      lastGuestInput = guestInput;
+      movePaddlesByInputs(hostInput, guestInput);
       updatePuck();
-    }
-    if (time - lastSent > 8) {
+      tick += 1;
+      tickAccumulator -= TICK_MS;
+      state.status = "경기 진행 중!";
+
       sendState();
-      lastSent = time;
+      hostInputBuffer.delete(tick - 10);
+      guestInputBuffer.delete(tick - 10);
     }
+
     renderRight.x = smoothTo(renderRight.x, state.right.x, 0.65, 0);
     renderRight.y = smoothTo(renderRight.y, state.right.y, 0.65, 0);
     renderRight.r = state.right.r;
   }
-  if (role === "guest") {
-    updateGuestLocal();
-    if (targetState) {
-      state.left = { ...state.left, ...targetState.left };
-      state.right = { ...state.right, ...targetState.right };
-      state.puck = { ...state.puck, ...targetState.puck };
-      if (!state.running) {
-        guestLocal = { x: state.right.x, y: state.right.y };
-      }
-    }
+
+  if (role === "guest" && targetState) {
+    state.left = { ...state.left, ...targetState.left };
+    state.right = { ...state.right, ...targetState.right };
+    state.puck = { ...state.puck, ...targetState.puck };
   }
+
   draw();
   requestAnimationFrame(loop);
 };
@@ -489,16 +497,8 @@ const connect = () => {
     }
 
     if (message.type === "guest-input" && role === "host") {
-      if (message.payload.input) {
-        Object.assign(guestInput, message.payload.input);
-      }
-      if (message.payload.pos) {
-        const now = performance.now();
-        guestPos = {
-          x: clamp(message.payload.pos.x, canvas.width / 2 + 40, bounds.maxX),
-          y: clamp(message.payload.pos.y, bounds.minY, bounds.maxY),
-        };
-        guestPosTime = now;
+      if (message.payload && typeof message.payload.tick === "number") {
+        guestInputBuffer.set(message.payload.tick, message.payload.input);
       }
     }
 
@@ -611,7 +611,7 @@ copyLinkBtn.addEventListener("click", copyShareLink);
 canvas.addEventListener("click", initAudio);
 document.addEventListener("pointerdown", initAudio);
 
-setInterval(sendInput, 16);
+setInterval(sendInput, TICK_MS);
 setInterval(sendPing, 1000);
 
 const params = new URLSearchParams(window.location.search);
@@ -625,16 +625,6 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
-
-
-
-
-
-
-
-
-
-
 
 
 
