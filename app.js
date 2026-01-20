@@ -308,10 +308,10 @@ const draw = () => {
   ctx.arc(state.left.x, state.left.y, state.left.r, 0, Math.PI * 2);
   ctx.fill();
 
-  const renderRight = rightRender || state.right;
+  const rightPaddle = role === "host" ? renderRight : state.right;
   ctx.fillStyle = "#263e59";
   ctx.beginPath();
-  ctx.arc(renderRight.x, renderRight.y, renderRight.r, 0, Math.PI * 2);
+  ctx.arc(rightPaddle.x, rightPaddle.y, rightPaddle.r, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#10172b";
@@ -608,8 +608,6 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
-
-
 
 
 
