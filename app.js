@@ -52,7 +52,7 @@ let lastScoreRight = 0;
 let lastPingSentAt = 0;
 let pingMs = null;
 // 락스텝 동기화
-const TICK_MS = 20;
+const TICK_MS = 16;
 let tick = 0;
 let tickAccumulator = 0;
 let lastFrameTime = performance.now();
@@ -271,19 +271,26 @@ const resolveCollision = (paddle) => {
 // 퍽 물리 업데이트(호스트)
 const updatePuck = () => {
   const puck = state.puck;
-  puck.x += puck.vx;
-  puck.y += puck.vy;
+  const steps = 3;
+  let wallHit = false;
+  let paddleHit = false;
+  let goalHit = false;
 
-  puck.vx *= 0.995;
-  puck.vy *= 0.995;
+  for (let i = 0; i < steps; i += 1) {
+    puck.x += puck.vx / steps;
+    puck.y += puck.vy / steps;
 
-  const wall = handleWallCollision() || handleSideWalls();
-  const hitLeft = resolveCollision(state.left);
-  const hitRight = resolveCollision(state.right);
-  const goal = handleGoal();
-  if (wall) playWall();
-  if (hitLeft || hitRight) playPaddle();
-  if (goal) playGoal();
+    puck.vx *= 0.995;
+    puck.vy *= 0.995;
+
+    wallHit = handleWallCollision() || handleSideWalls() || wallHit;
+    paddleHit = resolveCollision(state.left) || resolveCollision(state.right) || paddleHit;
+    goalHit = handleGoal() || goalHit;
+  }
+
+  if (wallHit) playWall();
+  if (paddleHit) playPaddle();
+  if (goalHit) playGoal();
 };
 
 // 렌더링
@@ -310,7 +317,8 @@ const draw = () => {
   ctx.arc(state.left.x, state.left.y, state.left.r, 0, Math.PI * 2);
   ctx.fill();
 
-  const rightPaddle = role === "guest" ? guestRender : renderRight;
+  const rightPaddle =
+    role === "guest" ? guestRender || state.right : renderRight;
   ctx.fillStyle = "#263e59";
   ctx.beginPath();
   ctx.arc(rightPaddle.x, rightPaddle.y, rightPaddle.r, 0, Math.PI * 2);
@@ -343,6 +351,7 @@ const applyRemoteState = (payload) => {
       targetTick = payload.tick + 1;
       localTick = targetTick;
     }
+    guestRender = { ...payload.right };
   } else {
     state.left = { ...state.left, ...payload.left };
     state.right = { ...state.right, ...payload.right };
@@ -457,8 +466,8 @@ const loop = (time) => {
 
   if (role === "guest" && targetState) {
     moveGuestRender(getInputSnapshot(), delta);
-    guestRender.x = smoothTo(guestRender.x, targetState.right.x, 0.2, 0);
-    guestRender.y = smoothTo(guestRender.y, targetState.right.y, 0.2, 0);
+    guestRender.x = smoothTo(guestRender.x, targetState.right.x, 0.35, 0);
+    guestRender.y = smoothTo(guestRender.y, targetState.right.y, 0.35, 0);
     guestRender.r = targetState.right.r;
     state.left = { ...state.left, ...targetState.left };
     state.right = { ...state.right, ...targetState.right };
@@ -639,7 +648,7 @@ copyLinkBtn.addEventListener("click", copyShareLink);
 canvas.addEventListener("click", initAudio);
 document.addEventListener("pointerdown", initAudio);
 
-setInterval(sendInput, TICK_MS);
+setInterval(sendInput, 16);
 setInterval(sendPing, 1000);
 
 const params = new URLSearchParams(window.location.search);
@@ -653,7 +662,3 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
-
-
-
-
