@@ -79,6 +79,7 @@ let fpsLastAt = performance.now();
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+const hasAnyInput = (state) => state.up || state.down || state.left || state.right;
 
 // 목표 구간 계산
 const goalHeight = 140;
@@ -510,10 +511,11 @@ const loop = () => {
     // 보정은 "같은 시간대(버퍼된 스냅샷)" 기준으로만 적용
     const auth = side === "left" ? sampled.left : sampled.right;
     const error = distance(localPaddle, auth);
-    if (error > 90) {
+    const allowSnap = !hasAnyInput(pastInput);
+    if (allowSnap && error > 90) {
       localPaddle.x = auth.x;
       localPaddle.y = auth.y;
-    } else {
+    } else if (!hasAnyInput(pastInput)) {
       localPaddle.x = lerp(localPaddle.x, auth.x, 0.08);
       localPaddle.y = lerp(localPaddle.y, auth.y, 0.08);
     }
