@@ -17,6 +17,14 @@ const debugText = document.getElementById("debugText");
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
 const BUFFER_MS = 100;
+const ARENA = { width: 900, height: 520 };
+const BOUNDS = {
+  minX: 40,
+  maxX: ARENA.width - 40,
+  minY: 40,
+  maxY: ARENA.height - 40,
+};
+const PADDLE_SPEED = 5.5;
 
 // 렌더 상태
 const renderState = {
@@ -28,10 +36,12 @@ const renderState = {
 // 네트워크/동기화
 let socket;
 let role = null;
+let side = null;
 let roomCode = "";
 let lastSentAt = 0;
 let lastStateAt = 0;
 let lastGuestInputAt = 0;
+let authoritativeState = null;
 
 // 오디오
 let audioReady = false;
@@ -47,6 +57,11 @@ let lastPingSentAt = 0;
 const snapshots = [];
 const MAX_SNAPSHOTS = 20;
 
+// 클라이언트 예측 상태
+const localPaddle = { x: 140, y: 260, r: 26 };
+let hasLocalPaddle = false;
+let lastLocalUpdateAt = performance.now();
+
 // FPS
 let frameCounter = 0;
 let fps = 0;
@@ -55,6 +70,7 @@ let fpsLastAt = performance.now();
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
+const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 // 오디오 초기화/효과음
 const initAudio = () => {
@@ -244,6 +260,7 @@ const connect = () => {
 
     if (message.type === "role") {
       role = message.role;
+      side = message.side;
       setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
       statusText.textContent =
         role === "host" ? "게스트 대기 중. 스페이스로 시작!" : "호스트가 시작하면 게임 시작.";
@@ -272,6 +289,7 @@ const connect = () => {
 
     if (message.type === "state") {
       lastStateAt = performance.now();
+      authoritativeState = message.payload;
       pushSnapshot(message.payload);
       scoreLeftEl.textContent = message.payload.scores.left.toString();
       scoreRightEl.textContent = message.payload.scores.right.toString();
@@ -367,11 +385,13 @@ document.addEventListener("keyup", (event) => {
 
 // 게임 루프
 const loop = () => {
+  const perfNow = performance.now();
+  const localDt = Math.min((perfNow - lastLocalUpdateAt) / 16.6667, 3);
+  lastLocalUpdateAt = perfNow;
   const now = Date.now();
   const renderTime = now - BUFFER_MS;
 
   frameCounter += 1;
-  const perfNow = performance.now();
   if (perfNow - fpsLastAt >= 500) {
     fps = Math.round((frameCounter * 1000) / (perfNow - fpsLastAt));
     frameCounter = 0;
@@ -383,6 +403,49 @@ const loop = () => {
     renderState.left = sampled.left;
     renderState.right = sampled.right;
     renderState.puck = sampled.puck;
+  }
+
+  // 로컬 패들 예측: 내 입력을 즉시 반영해 반응성을 확보
+  if (side && sampled) {
+    if (!hasLocalPaddle) {
+      const base = side === "left" ? sampled.left : sampled.right;
+      localPaddle.x = base.x;
+      localPaddle.y = base.y;
+      localPaddle.r = base.r;
+      hasLocalPaddle = true;
+    }
+
+    const step = PADDLE_SPEED * localDt;
+    if (inputState.up) localPaddle.y -= step;
+    if (inputState.down) localPaddle.y += step;
+    if (inputState.left) localPaddle.x -= step;
+    if (inputState.right) localPaddle.x += step;
+
+    if (side === "left") {
+      localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - 40);
+    } else {
+      localPaddle.x = clamp(localPaddle.x, ARENA.width / 2 + 40, BOUNDS.maxX);
+    }
+    localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
+
+    // 서버 권위 상태로 보정(드리프트 방지)
+    if (authoritativeState) {
+      const auth = side === "left" ? authoritativeState.left : authoritativeState.right;
+      const error = distance(localPaddle, auth);
+      if (error > 25) {
+        localPaddle.x = auth.x;
+        localPaddle.y = auth.y;
+      } else {
+        localPaddle.x = lerp(localPaddle.x, auth.x, 0.35);
+        localPaddle.y = lerp(localPaddle.y, auth.y, 0.35);
+      }
+    }
+
+    if (side === "left") {
+      renderState.left = { ...renderState.left, x: localPaddle.x, y: localPaddle.y };
+    } else {
+      renderState.right = { ...renderState.right, x: localPaddle.x, y: localPaddle.y };
+    }
   }
 
   draw();
