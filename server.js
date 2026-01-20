@@ -62,9 +62,9 @@ const broadcast = (room, payload) => {
 
 // 초기 게임 상태
 const createState = () => ({
-  left: { x: 140, y: 260, r: 26, speed: 5.5 },
-  right: { x: 760, y: 260, r: 26, speed: 5.5 },
-  puck: { x: 450, y: 260, r: 16, vx: 4, vy: 2.5 },
+  left: { x: 140, y: 260, r: 26, speed: 6.4 },
+  right: { x: 760, y: 260, r: 26, speed: 6.4 },
+  puck: { x: 450, y: 260, r: 16, vx: 6.2, vy: 3.6 },
   scores: { left: 0, right: 0 },
   running: false,
   status: "스페이스를 누르면 시작!",
@@ -139,7 +139,7 @@ const resolveCollision = (puck, paddle) => {
     const angle = Math.atan2(dy, dx);
     puck.x = paddle.x + Math.cos(angle) * minDist;
     puck.y = paddle.y + Math.sin(angle) * minDist;
-    const speed = Math.hypot(puck.vx, puck.vy) + 0.8;
+    const speed = Math.hypot(puck.vx, puck.vy) + 2.2;
     puck.vx = Math.cos(angle) * speed;
     puck.vy = Math.sin(angle) * speed;
     return true;
@@ -155,8 +155,8 @@ const resetRound = (state, direction) => {
   state.right.y = 260;
   state.puck.x = 450;
   state.puck.y = 260;
-  state.puck.vx = 4 * direction;
-  state.puck.vy = (Math.random() * 2.5 + 1.5) * (Math.random() > 0.5 ? 1 : -1);
+  state.puck.vx = 6.2 * direction;
+  state.puck.vy = (Math.random() * 2.8 + 2.2) * (Math.random() > 0.5 ? 1 : -1);
 };
 
 // 서버 authoritative 물리 시뮬레이션
@@ -182,8 +182,8 @@ const stepRoom = (room) => {
     puck.x += puck.vx / steps;
     puck.y += puck.vy / steps;
 
-    puck.vx *= 0.995;
-    puck.vy *= 0.995;
+    puck.vx *= 0.998;
+    puck.vy *= 0.998;
 
     events.wall = handleWallCollision(puck) || handleSideWalls(puck) || events.wall;
     events.paddle = resolveCollision(puck, state.left) || resolveCollision(puck, state.right) || events.paddle;

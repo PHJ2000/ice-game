@@ -16,7 +16,7 @@ const debugText = document.getElementById("debugText");
 // 입력/상수
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
-const BASE_BUFFER_MS = 50;
+const BASE_BUFFER_MS = 30;
 const ARENA = { width: 900, height: 520 };
 const BOUNDS = {
   minX: 40,
@@ -24,8 +24,8 @@ const BOUNDS = {
   minY: 40,
   maxY: ARENA.height - 40,
 };
-const PADDLE_SPEED = 5.5;
-const PUCK_FRICTION = 0.995;
+const PADDLE_SPEED = 6.4;
+const PUCK_FRICTION = 0.998;
 
 // 렌더 상태
 const renderState = {
@@ -112,7 +112,7 @@ const resolveLocalPuckCollision = (puck, paddle) => {
     const angle = Math.atan2(dy, dx);
     puck.x = paddle.x + Math.cos(angle) * minDist;
     puck.y = paddle.y + Math.sin(angle) * minDist;
-    const speed = Math.hypot(puck.vx, puck.vy) + 0.8;
+    const speed = Math.hypot(puck.vx, puck.vy) + 2.2;
     puck.vx = Math.cos(angle) * speed;
     puck.vy = Math.sin(angle) * speed;
     return true;
