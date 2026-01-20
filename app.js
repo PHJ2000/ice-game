@@ -46,6 +46,7 @@ let inputSeq = 0;
 let lastInputSentAt = performance.now();
 let pendingInputs = [];
 const MAX_PENDING_INPUTS = 120;
+let lastAckSeq = 0;
 
 // 오디오
 let audioReady = false;
@@ -216,6 +217,8 @@ const reconcileLocalPaddle = (payload) => {
   if (!side || !payload || !payload.acks) return;
   const ackSeq = payload.acks[side];
   if (!Number.isFinite(ackSeq)) return;
+  if (ackSeq <= lastAckSeq) return;
+  lastAckSeq = ackSeq;
 
   const auth = side === "left" ? payload.left : payload.right;
   localPaddle.x = auth.x;
@@ -316,6 +319,7 @@ const connect = () => {
       inputSeq = 0;
       pendingInputs = [];
       lastInputSentAt = performance.now();
+      lastAckSeq = 0;
       hasLocalPaddle = false;
       setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
       statusText.textContent =
