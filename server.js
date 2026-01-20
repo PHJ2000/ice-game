@@ -11,6 +11,7 @@ const mimeTypes = {
   ".css": "text/css",
   ".js": "application/javascript",
   ".wav": "audio/wav",
+  ".ico": "image/x-icon",
 };
 
 const server = http.createServer((req, res) => {

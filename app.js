@@ -411,15 +411,17 @@ const loop = (time) => {
 
       const hostInput = hostInputBuffer.get(tick) || lastHostInput;
       const guestInput = guestInputBuffer.get(tick);
+      const resolvedGuestInput = guestInput || lastGuestInput;
 
       if (!guestInput) {
-        state.status = "입력 대기 중...";
-        break;
+        state.status = "입력 지연 - 예측 중...";
       }
 
       lastHostInput = hostInput;
-      lastGuestInput = guestInput;
-      movePaddlesByInputs(hostInput, guestInput);
+      if (guestInput) {
+        lastGuestInput = guestInput;
+      }
+      movePaddlesByInputs(hostInput, resolvedGuestInput);
       updatePuck();
       tick += 1;
       tickAccumulator -= TICK_MS;
@@ -625,7 +627,6 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
-
 
 
 
