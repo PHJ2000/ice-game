@@ -52,7 +52,7 @@ let lastScoreRight = 0;
 let lastPingSentAt = 0;
 let pingMs = null;
 // 락스텝 동기화
-const TICK_MS = 50;
+const TICK_MS = 20;
 let tick = 0;
 let tickAccumulator = 0;
 let lastFrameTime = performance.now();
@@ -61,6 +61,8 @@ let guestInputBuffer = new Map();
 let lastHostInput = { up: false, down: false, left: false, right: false };
 let lastGuestInput = { up: false, down: false, left: false, right: false };
 let targetTick = 0;
+let localTick = 0;
+let guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
 
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -98,6 +100,8 @@ const resetGame = () => {
   lastHostInput = { up: false, down: false, left: false, right: false };
   lastGuestInput = { up: false, down: false, left: false, right: false };
   targetTick = 0;
+  localTick = 0;
+  guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
   resetRound();
   sendState();
 };
@@ -150,11 +154,12 @@ const getInputSnapshot = () => ({
 });
 
 // 입력을 패들에 적용(락스텝)
-const applyInputToPaddle = (paddle, input) => {
-  if (input.up) paddle.y -= paddle.speed;
-  if (input.down) paddle.y += paddle.speed;
-  if (input.left) paddle.x -= paddle.speed;
-  if (input.right) paddle.x += paddle.speed;
+const applyInputToPaddle = (paddle, input, scale = 1) => {
+  const speed = paddle.speed * scale;
+  if (input.up) paddle.y -= speed;
+  if (input.down) paddle.y += speed;
+  if (input.left) paddle.x -= speed;
+  if (input.right) paddle.x += speed;
   return paddle;
 };
 
@@ -167,6 +172,14 @@ const movePaddlesByInputs = (leftInput, rightInput) => {
   left.y = clamp(left.y, bounds.minY, bounds.maxY);
   right.x = clamp(right.x, canvas.width / 2 + 40, bounds.maxX);
   right.y = clamp(right.y, bounds.minY, bounds.maxY);
+};
+
+// 게스트 로컬 렌더 이동(예측)
+const moveGuestRender = (input, deltaMs) => {
+  const scale = deltaMs / 16;
+  applyInputToPaddle(guestRender, input, scale);
+  guestRender.x = clamp(guestRender.x, canvas.width / 2 + 40, bounds.maxX);
+  guestRender.y = clamp(guestRender.y, bounds.minY, bounds.maxY);
 };
 
 // 벽 충돌 처리
@@ -297,7 +310,7 @@ const draw = () => {
   ctx.arc(state.left.x, state.left.y, state.left.r, 0, Math.PI * 2);
   ctx.fill();
 
-  const rightPaddle = role === "host" ? renderRight : state.right;
+  const rightPaddle = role === "guest" ? guestRender : renderRight;
   ctx.fillStyle = "#263e59";
   ctx.beginPath();
   ctx.arc(rightPaddle.x, rightPaddle.y, rightPaddle.r, 0, Math.PI * 2);
@@ -328,6 +341,7 @@ const applyRemoteState = (payload) => {
     state.status = payload.status;
     if (typeof payload.tick === "number") {
       targetTick = payload.tick + 1;
+      localTick = targetTick;
     }
   } else {
     state.left = { ...state.left, ...payload.left };
@@ -382,14 +396,18 @@ const sendState = () => {
 // 게스트 입력 전송
 const sendInput = () => {
   if (role !== "guest" || !roomCode) return;
+  if (localTick === 0 && targetTick > 0) {
+    localTick = targetTick;
+  }
   sendMessage({
     type: "input",
     room: roomCode,
     payload: {
-      tick: targetTick,
+      tick: localTick,
       input: getInputSnapshot(),
     },
   });
+  localTick += 1;
 };
 
 // 게임 루프(락스텝)
@@ -438,6 +456,10 @@ const loop = (time) => {
   }
 
   if (role === "guest" && targetState) {
+    moveGuestRender(getInputSnapshot(), delta);
+    guestRender.x = smoothTo(guestRender.x, targetState.right.x, 0.2, 0);
+    guestRender.y = smoothTo(guestRender.y, targetState.right.y, 0.2, 0);
+    guestRender.r = targetState.right.r;
     state.left = { ...state.left, ...targetState.left };
     state.right = { ...state.right, ...targetState.right };
     state.puck = { ...state.puck, ...targetState.puck };
@@ -500,7 +522,11 @@ const connect = () => {
 
     if (message.type === "guest-input" && role === "host") {
       if (message.payload && typeof message.payload.tick === "number") {
-        guestInputBuffer.set(message.payload.tick, message.payload.input);
+        const incomingTick = message.payload.tick;
+        const minTick = tick;
+        const maxTick = tick + 5;
+        const mappedTick = Math.min(Math.max(incomingTick, minTick), maxTick);
+        guestInputBuffer.set(mappedTick, message.payload.input);
       }
     }
 
@@ -627,13 +653,6 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
-
-
-
-
-
-
-
 
 
 
