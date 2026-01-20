@@ -16,6 +16,7 @@ const connectionStatus = document.getElementById("connectionStatus");
 const keys = new Set();
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
+const guestInput = { up: false, down: false, left: false, right: false };
 
 // 게임 상태
 const state = {
@@ -51,17 +52,7 @@ let lastScoreLeft = 0;
 let lastScoreRight = 0;
 let lastPingSentAt = 0;
 let pingMs = null;
-// 락스텝 동기화
-const TICK_MS = 16;
-let tick = 0;
-let tickAccumulator = 0;
 let lastFrameTime = performance.now();
-let hostInputBuffer = new Map();
-let guestInputBuffer = new Map();
-let lastHostInput = { up: false, down: false, left: false, right: false };
-let lastGuestInput = { up: false, down: false, left: false, right: false };
-let targetTick = 0;
-let localTick = 0;
 let guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
 
 // 유틸
@@ -92,15 +83,9 @@ const resetGame = () => {
   state.running = false;
   state.status = "스페이스를 누르면 시작!";
   statusText.textContent = state.status;
-  tick = 0;
-  tickAccumulator = 0;
   lastFrameTime = performance.now();
-  hostInputBuffer.clear();
-  guestInputBuffer.clear();
-  lastHostInput = { up: false, down: false, left: false, right: false };
-  lastGuestInput = { up: false, down: false, left: false, right: false };
-  targetTick = 0;
-  localTick = 0;
+  targetState = null;
+  renderRight = { x: state.right.x, y: state.right.y, r: state.right.r };
   guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
   resetRound();
   sendState();
@@ -145,15 +130,7 @@ const playWall = () => playTone(360, 0.08, 0.12);
 const playPaddle = () => playTone(520, 0.09, 0.18);
 const playGoal = () => playTone(220, 0.22, 0.3);
 
-// 입력 스냅샷 생성
-const getInputSnapshot = () => ({
-  up: inputState.up,
-  down: inputState.down,
-  left: inputState.left,
-  right: inputState.right,
-});
-
-// 입력을 패들에 적용(락스텝)
+// 입력을 패들에 적용
 const applyInputToPaddle = (paddle, input, scale = 1) => {
   const speed = paddle.speed * scale;
   if (input.up) paddle.y -= speed;
@@ -163,10 +140,10 @@ const applyInputToPaddle = (paddle, input, scale = 1) => {
   return paddle;
 };
 
-// 락스텝 입력으로 패들 이동(호스트)
-const movePaddlesByInputs = (leftInput, rightInput) => {
-  const left = applyInputToPaddle(state.left, leftInput);
-  const right = applyInputToPaddle(state.right, rightInput);
+// 패들 이동(호스트)
+const movePaddles = (scale = 1) => {
+  const left = applyInputToPaddle(state.left, inputState, scale);
+  const right = applyInputToPaddle(state.right, guestInput, scale);
 
   left.x = clamp(left.x, bounds.minX, canvas.width / 2 - 40);
   left.y = clamp(left.y, bounds.minY, bounds.maxY);
@@ -186,8 +163,14 @@ const moveGuestRender = (input, deltaMs) => {
 const handleWallCollision = () => {
   const puck = state.puck;
   let bounced = false;
-  if (puck.y - puck.r <= bounds.minY || puck.y + puck.r >= bounds.maxY) {
-    puck.vy *= -1;
+  if (puck.y - puck.r <= bounds.minY) {
+    puck.y = bounds.minY + puck.r;
+    puck.vy = Math.abs(puck.vy);
+    bounced = true;
+  }
+  if (puck.y + puck.r >= bounds.maxY) {
+    puck.y = bounds.maxY - puck.r;
+    puck.vy = -Math.abs(puck.vy);
     bounced = true;
   }
   return bounced;
@@ -203,11 +186,13 @@ const handleSideWalls = () => {
   let bounced = false;
 
   if (!inGoalY && puck.x - puck.r <= bounds.minX) {
+    puck.x = bounds.minX + puck.r;
     puck.vx = Math.abs(puck.vx);
     bounced = true;
   }
 
   if (!inGoalY && puck.x + puck.r >= bounds.maxX) {
+    puck.x = bounds.maxX - puck.r;
     puck.vx = -Math.abs(puck.vx);
     bounced = true;
   }
@@ -347,10 +332,6 @@ const applyRemoteState = (payload) => {
     state.scores = payload.scores;
     state.running = payload.running;
     state.status = payload.status;
-    if (typeof payload.tick === "number") {
-      targetTick = payload.tick + 1;
-      localTick = targetTick;
-    }
     guestRender = { ...payload.right };
   } else {
     state.left = { ...state.left, ...payload.left };
@@ -397,7 +378,6 @@ const sendState = () => {
       scores: state.scores,
       running: state.running,
       status: state.status,
-      tick,
     },
   });
 };
@@ -405,69 +385,39 @@ const sendState = () => {
 // 게스트 입력 전송
 const sendInput = () => {
   if (role !== "guest" || !roomCode) return;
-  if (localTick === 0 && targetTick > 0) {
-    localTick = targetTick;
-  }
   sendMessage({
     type: "input",
     room: roomCode,
     payload: {
-      tick: localTick,
-      input: getInputSnapshot(),
+      input: { ...inputState },
     },
   });
-  localTick += 1;
 };
 
-// 게임 루프(락스텝)
+// 게임 루프
 const loop = (time) => {
   const delta = time - lastFrameTime;
   lastFrameTime = time;
-  tickAccumulator += delta;
+  const scale = Math.min(delta / 16, 2);
 
   if (role === "host") {
-    while (tickAccumulator >= TICK_MS) {
-      if (!state.running) {
-        tickAccumulator = 0;
-        break;
-      }
-
-      if (!hostInputBuffer.has(tick)) {
-        hostInputBuffer.set(tick, getInputSnapshot());
-      }
-
-      const hostInput = hostInputBuffer.get(tick) || lastHostInput;
-      const guestInput = guestInputBuffer.get(tick);
-      const resolvedGuestInput = guestInput || lastGuestInput;
-
-      if (!guestInput) {
-        state.status = "입력 지연 - 예측 중...";
-      }
-
-      lastHostInput = hostInput;
-      if (guestInput) {
-        lastGuestInput = guestInput;
-      }
-      movePaddlesByInputs(hostInput, resolvedGuestInput);
+    if (state.running) {
+      movePaddles(scale);
       updatePuck();
-      tick += 1;
-      tickAccumulator -= TICK_MS;
-      state.status = "경기 진행 중!";
-
-      sendState();
-      hostInputBuffer.delete(tick - 10);
-      guestInputBuffer.delete(tick - 10);
     }
-
-    renderRight.x = smoothTo(renderRight.x, state.right.x, 0.65, 0);
-    renderRight.y = smoothTo(renderRight.y, state.right.y, 0.65, 0);
+    if (time - lastSent > 16) {
+      sendState();
+      lastSent = time;
+    }
+    renderRight.x = smoothTo(renderRight.x, state.right.x, 0.7, 0);
+    renderRight.y = smoothTo(renderRight.y, state.right.y, 0.7, 0);
     renderRight.r = state.right.r;
   }
 
   if (role === "guest" && targetState) {
-    moveGuestRender(getInputSnapshot(), delta);
-    guestRender.x = smoothTo(guestRender.x, targetState.right.x, 0.35, 0);
-    guestRender.y = smoothTo(guestRender.y, targetState.right.y, 0.35, 0);
+    moveGuestRender(inputState, delta);
+    guestRender.x = smoothTo(guestRender.x, targetState.right.x, 0.4, 0);
+    guestRender.y = smoothTo(guestRender.y, targetState.right.y, 0.4, 0);
     guestRender.r = targetState.right.r;
     state.left = { ...state.left, ...targetState.left };
     state.right = { ...state.right, ...targetState.right };
@@ -530,12 +480,8 @@ const connect = () => {
     }
 
     if (message.type === "guest-input" && role === "host") {
-      if (message.payload && typeof message.payload.tick === "number") {
-        const incomingTick = message.payload.tick;
-        const minTick = tick;
-        const maxTick = tick + 5;
-        const mappedTick = Math.min(Math.max(incomingTick, minTick), maxTick);
-        guestInputBuffer.set(mappedTick, message.payload.input);
+      if (message.payload && message.payload.input) {
+        Object.assign(guestInput, message.payload.input);
       }
     }
 
