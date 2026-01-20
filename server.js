@@ -1,6 +1,7 @@
-﻿const http = require("http");
+const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const planck = require("planck-js");
 const { WebSocketServer } = require("ws");
 
 const port = process.env.PORT || 3000;
@@ -50,6 +51,25 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 const rooms = new Map();
 let nextId = 1;
 
+// 경기/물리 상수
+const ARENA = { width: 900, height: 520 };
+const WALL = 40;
+const GOAL_HEIGHT = 140;
+const SCALE = 0.01; // px -> m
+const FIXED_DT = 1 / 60;
+const PADDLE_SPEED_PX = 6.4;
+const PADDLE_SPEED = PADDLE_SPEED_PX * SCALE * 60;
+
+const PUCK_INITIAL_VX_PX = 6.2;
+const PUCK_INITIAL_VY_PX = 3.6;
+const PUCK_INITIAL_VX = PUCK_INITIAL_VX_PX * SCALE * 60;
+const PUCK_INITIAL_VY = PUCK_INITIAL_VY_PX * SCALE * 60;
+const MAX_PUCK_SPEED_PX = 18;
+const MAX_PUCK_SPEED = MAX_PUCK_SPEED_PX * SCALE * 60;
+
+const toWorld = (value) => value * SCALE;
+const toPixel = (value) => value / SCALE;
+
 const send = (ws, payload) => {
   if (ws.readyState === ws.OPEN) {
     ws.send(JSON.stringify(payload));
@@ -62,194 +82,217 @@ const broadcast = (room, payload) => {
 
 // 초기 게임 상태
 const createState = () => ({
-  left: { x: 140, y: 260, r: 26, speed: 6.4, vx: 0, vy: 0 },
-  right: { x: 760, y: 260, r: 26, speed: 6.4, vx: 0, vy: 0 },
-  puck: { x: 450, y: 260, r: 16, vx: 6.2, vy: 3.6 },
+  left: { x: 140, y: 260, r: 26 },
+  right: { x: 760, y: 260, r: 26 },
+  puck: { x: 450, y: 260, r: 16, vx: PUCK_INITIAL_VX_PX * 60, vy: PUCK_INITIAL_VY_PX * 60 },
   scores: { left: 0, right: 0 },
   running: false,
   status: "스페이스를 누르면 시작!",
 });
 
-const bounds = {
-  minX: 40,
-  maxX: 900 - 40,
-  minY: 40,
-  maxY: 520 - 40,
+// 물리 월드 생성
+const createPhysicsWorld = () => {
+  const Vec2 = planck.Vec2;
+  const world = planck.World(Vec2(0, 0));
+
+  const wallBody = world.createBody();
+  wallBody.setUserData("wall");
+
+  const minX = toWorld(WALL);
+  const maxX = toWorld(ARENA.width - WALL);
+  const minY = toWorld(WALL);
+  const maxY = toWorld(ARENA.height - WALL);
+
+  const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
+  const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
+
+  const wallFixture = { restitution: 0.98, friction: 0 };
+  wallBody.createFixture(planck.Edge(Vec2(minX, minY), Vec2(maxX, minY)), wallFixture);
+  wallBody.createFixture(planck.Edge(Vec2(minX, maxY), Vec2(maxX, maxY)), wallFixture);
+  wallBody.createFixture(planck.Edge(Vec2(minX, minY), Vec2(minX, goalTop)), wallFixture);
+  wallBody.createFixture(planck.Edge(Vec2(minX, goalBottom), Vec2(minX, maxY)), wallFixture);
+  wallBody.createFixture(planck.Edge(Vec2(maxX, minY), Vec2(maxX, goalTop)), wallFixture);
+  wallBody.createFixture(planck.Edge(Vec2(maxX, goalBottom), Vec2(maxX, maxY)), wallFixture);
+
+  const leftPaddle = world.createBody({
+    type: "kinematic",
+    position: Vec2(toWorld(140), toWorld(260)),
+  });
+  leftPaddle.setUserData("paddle");
+  leftPaddle.createFixture(planck.Circle(toWorld(26)), { restitution: 0.6, friction: 0 });
+
+  const rightPaddle = world.createBody({
+    type: "kinematic",
+    position: Vec2(toWorld(760), toWorld(260)),
+  });
+  rightPaddle.setUserData("paddle");
+  rightPaddle.createFixture(planck.Circle(toWorld(26)), { restitution: 0.6, friction: 0 });
+
+  const puck = world.createBody({
+    type: "dynamic",
+    position: Vec2(toWorld(450), toWorld(260)),
+    bullet: true,
+  });
+  puck.setUserData("puck");
+  puck.createFixture(planck.Circle(toWorld(16)), { restitution: 0.95, friction: 0 });
+  puck.setLinearDamping(0.005);
+
+  return { world, leftPaddle, rightPaddle, puck };
 };
 
-const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
-const clampAbs = (value, maxAbs) => clamp(value, -maxAbs, maxAbs);
-
-const MAX_PADDLE_SPEED = 8.5;
-const MAX_PUCK_SPEED = 18;
-const RESTITUTION = 0.92;
-const TRANSFER = 0.75;
-const EPSILON = 0.5;
-
-// 입력을 패들 위치에 반영
-const applyInput = (paddle, input, scale = 1) => {
-  const speed = paddle.speed * scale;
-  if (input.up) paddle.y -= speed;
-  if (input.down) paddle.y += speed;
-  if (input.left) paddle.x -= speed;
-  if (input.right) paddle.x += speed;
-  return paddle;
-};
-
-// 상하 벽 충돌 처리
-const handleWallCollision = (puck) => {
-  let wall = false;
-  if (puck.y - puck.r <= bounds.minY) {
-    puck.y = bounds.minY + puck.r;
-    puck.vy = Math.abs(puck.vy);
-    wall = true;
-  }
-  if (puck.y + puck.r >= bounds.maxY) {
-    puck.y = bounds.maxY - puck.r;
-    puck.vy = -Math.abs(puck.vy);
-    wall = true;
-  }
-  return wall;
-};
-
-// 좌우 벽(골라인 제외) 충돌 처리
-const handleSideWalls = (puck) => {
-  const goalHeight = 140;
-  const goalTop = 520 / 2 - goalHeight / 2;
-  const goalBottom = 520 / 2 + goalHeight / 2;
-  const inGoalY = puck.y > goalTop && puck.y < goalBottom;
-  let wall = false;
-
-  if (!inGoalY && puck.x - puck.r <= bounds.minX) {
-    puck.x = bounds.minX + puck.r;
-    puck.vx = Math.abs(puck.vx);
-    wall = true;
-  }
-
-  if (!inGoalY && puck.x + puck.r >= bounds.maxX) {
-    puck.x = bounds.maxX - puck.r;
-    puck.vx = -Math.abs(puck.vx);
-    wall = true;
-  }
-
-  return wall;
-};
-
-// 퍽-패들 충돌 처리 (패들 속도 반영)
-const resolveCollision = (puck, paddle) => {
-  const dx = puck.x - paddle.x;
-  const dy = puck.y - paddle.y;
-  const dist = Math.hypot(dx, dy);
-  const minDist = puck.r + paddle.r;
-
-  if (dist < minDist) {
-    const nx = dx / dist;
-    const ny = dy / dist;
-
-    // 패들 속도를 상대속도에 반영
-    const vRelx = puck.vx - TRANSFER * paddle.vx;
-    const vRely = puck.vy - TRANSFER * paddle.vy;
-    const vn = vRelx * nx + vRely * ny;
-
-    // 서로 접근 중일 때만 반사
-    if (vn < 0) {
-      const j = -(1 + RESTITUTION) * vn;
-      const vRelx2 = vRelx + j * nx;
-      const vRely2 = vRely + j * ny;
-      puck.vx = vRelx2 + TRANSFER * paddle.vx;
-      puck.vy = vRely2 + TRANSFER * paddle.vy;
-    }
-
-    // 겹침 해소
-    puck.x = paddle.x + nx * (minDist + EPSILON);
-    puck.y = paddle.y + ny * (minDist + EPSILON);
-
-    // 퍽 속도 상한
-    const speed = Math.hypot(puck.vx, puck.vy);
-    if (speed > MAX_PUCK_SPEED) {
-      puck.vx = (puck.vx / speed) * MAX_PUCK_SPEED;
-      puck.vy = (puck.vy / speed) * MAX_PUCK_SPEED;
-    }
-    return true;
-  }
-  return false;
-};
-
-// 득점 후 리셋
-const resetRound = (state, direction) => {
-  state.left.x = 140;
-  state.left.y = 260;
-  state.right.x = 760;
-  state.right.y = 260;
-  state.puck.x = 450;
-  state.puck.y = 260;
-  state.puck.vx = 6.2 * direction;
-  state.puck.vy = (Math.random() * 2.8 + 2.2) * (Math.random() > 0.5 ? 1 : -1);
-};
-
-// 서버 authoritative 물리 시뮬레이션
-const stepRoom = (room) => {
-  const state = room.state;
+// 방 생성
+const createRoom = () => {
+  const physics = createPhysicsWorld();
   const events = { wall: false, paddle: false, goal: false };
 
+  physics.world.on("begin-contact", (contact) => {
+    const a = contact.getFixtureA().getBody().getUserData();
+    const b = contact.getFixtureB().getBody().getUserData();
+    if (!a || !b) return;
+    if ((a === "puck" && b === "paddle") || (a === "paddle" && b === "puck")) {
+      events.paddle = true;
+    }
+    if ((a === "puck" && b === "wall") || (a === "wall" && b === "puck")) {
+      events.wall = true;
+    }
+  });
+
+  return {
+    hostId: null,
+    clients: new Map(),
+    state: createState(),
+    inputs: {
+      left: { up: false, down: false, left: false, right: false },
+      right: { up: false, down: false, left: false, right: false },
+    },
+    lastSeq: { left: 0, right: 0 },
+    timer: null,
+    physics,
+    events,
+  };
+};
+
+// 입력을 패들 속도로 변환
+const applyPaddleVelocity = (body, input) => {
+  let vx = 0;
+  let vy = 0;
+  if (input.left) vx -= PADDLE_SPEED;
+  if (input.right) vx += PADDLE_SPEED;
+  if (input.up) vy -= PADDLE_SPEED;
+  if (input.down) vy += PADDLE_SPEED;
+  body.setLinearVelocity(planck.Vec2(vx, vy));
+};
+
+const clampPaddlePosition = (body, side) => {
+  const pos = body.getPosition();
+  const minY = toWorld(WALL);
+  const maxY = toWorld(ARENA.height - WALL);
+  const minX = toWorld(WALL);
+  const maxX = toWorld(ARENA.width - WALL);
+  const mid = toWorld(ARENA.width / 2);
+
+  let x = pos.x;
+  let y = pos.y;
+
+  if (side === "left") {
+    x = Math.min(Math.max(x, minX), mid - toWorld(WALL));
+  } else {
+    x = Math.min(Math.max(x, mid + toWorld(WALL)), maxX);
+  }
+
+  y = Math.min(Math.max(y, minY), maxY);
+
+  body.setPosition(planck.Vec2(x, y));
+};
+
+const resetRound = (room, direction) => {
+  const { leftPaddle, rightPaddle, puck } = room.physics;
+
+  leftPaddle.setPosition(planck.Vec2(toWorld(140), toWorld(260)));
+  rightPaddle.setPosition(planck.Vec2(toWorld(760), toWorld(260)));
+  leftPaddle.setLinearVelocity(planck.Vec2(0, 0));
+  rightPaddle.setLinearVelocity(planck.Vec2(0, 0));
+
+  puck.setPosition(planck.Vec2(toWorld(450), toWorld(260)));
+  const vyPx = (Math.random() * 2.8 + 2.2) * 60 * (Math.random() > 0.5 ? 1 : -1);
+  puck.setLinearVelocity(planck.Vec2(PUCK_INITIAL_VX * direction, vyPx * SCALE));
+};
+
+const syncStateFromBodies = (room) => {
+  const { leftPaddle, rightPaddle, puck } = room.physics;
+  const puckVel = puck.getLinearVelocity();
+  const leftPos = leftPaddle.getPosition();
+  const rightPos = rightPaddle.getPosition();
+  const puckPos = puck.getPosition();
+
+  room.state.left.x = toPixel(leftPos.x);
+  room.state.left.y = toPixel(leftPos.y);
+  room.state.right.x = toPixel(rightPos.x);
+  room.state.right.y = toPixel(rightPos.y);
+  room.state.puck.x = toPixel(puckPos.x);
+  room.state.puck.y = toPixel(puckPos.y);
+  room.state.puck.vx = toPixel(puckVel.x);
+  room.state.puck.vy = toPixel(puckVel.y);
+};
+
+const stepRoom = (room) => {
+  const { state, events } = room;
+  const { world, leftPaddle, rightPaddle, puck } = room.physics;
+
+  events.wall = false;
+  events.paddle = false;
+  events.goal = false;
+
   if (!state.running) {
+    leftPaddle.setLinearVelocity(planck.Vec2(0, 0));
+    rightPaddle.setLinearVelocity(planck.Vec2(0, 0));
+    syncStateFromBodies(room);
     return { state, events };
   }
 
-  const prevLeft = { x: state.left.x, y: state.left.y };
-  const prevRight = { x: state.right.x, y: state.right.y };
+  applyPaddleVelocity(leftPaddle, room.inputs.left);
+  applyPaddleVelocity(rightPaddle, room.inputs.right);
 
-  applyInput(state.left, room.inputs.left);
-  applyInput(state.right, room.inputs.right);
+  world.step(FIXED_DT, 8, 3);
 
-  state.left.x = clamp(state.left.x, bounds.minX, 900 / 2 - 40);
-  state.left.y = clamp(state.left.y, bounds.minY, bounds.maxY);
-  state.right.x = clamp(state.right.x, 900 / 2 + 40, bounds.maxX);
-  state.right.y = clamp(state.right.y, bounds.minY, bounds.maxY);
+  clampPaddlePosition(leftPaddle, "left");
+  clampPaddlePosition(rightPaddle, "right");
 
-  // 패들 속도 계산(한 틱 기준) + 클램프
-  state.left.vx = clampAbs(state.left.x - prevLeft.x, MAX_PADDLE_SPEED);
-  state.left.vy = clampAbs(state.left.y - prevLeft.y, MAX_PADDLE_SPEED);
-  state.right.vx = clampAbs(state.right.x - prevRight.x, MAX_PADDLE_SPEED);
-  state.right.vy = clampAbs(state.right.y - prevRight.y, MAX_PADDLE_SPEED);
-
-  const puck = state.puck;
-  const speedNow = Math.hypot(puck.vx, puck.vy);
-  const steps = clamp(Math.ceil(speedNow / 6), 3, 8);
-  for (let i = 0; i < steps; i += 1) {
-    puck.x += puck.vx / steps;
-    puck.y += puck.vy / steps;
-
-    puck.vx *= 0.998;
-    puck.vy *= 0.998;
-
-    events.wall = handleWallCollision(puck) || handleSideWalls(puck) || events.wall;
-    events.paddle = resolveCollision(puck, state.left) || resolveCollision(puck, state.right) || events.paddle;
-
-    const goalHeight = 140;
-    const goalTop = 520 / 2 - goalHeight / 2;
-    const goalBottom = 520 / 2 + goalHeight / 2;
-
-    if (puck.x - puck.r <= 20 && puck.y > goalTop && puck.y < goalBottom) {
-      state.scores.right += 1;
-      state.status = "플레이어 2 득점!";
-      resetRound(state, 1);
-      events.goal = true;
-    }
-
-    if (puck.x + puck.r >= 900 - 20 && puck.y > goalTop && puck.y < goalBottom) {
-      state.scores.left += 1;
-      state.status = "플레이어 1 득점!";
-      resetRound(state, -1);
-      events.goal = true;
-    }
-
-    if (state.scores.left >= 7 || state.scores.right >= 7) {
-      state.running = false;
-      state.status = state.scores.left > state.scores.right ? "플레이어 1 승리!" : "플레이어 2 승리!";
-    }
+  // 퍽 속도 제한
+  const puckVel = puck.getLinearVelocity();
+  const speed = Math.hypot(puckVel.x, puckVel.y);
+  if (speed > MAX_PUCK_SPEED) {
+    const scale = MAX_PUCK_SPEED / speed;
+    puck.setLinearVelocity(planck.Vec2(puckVel.x * scale, puckVel.y * scale));
   }
 
+  // 득점 체크
+  const puckPos = puck.getPosition();
+  const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
+  const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
+  const minX = toWorld(WALL);
+  const maxX = toWorld(ARENA.width - WALL);
+
+  if (puckPos.x - toWorld(16) <= minX && puckPos.y > goalTop && puckPos.y < goalBottom) {
+    state.scores.right += 1;
+    state.status = "플레이어 2 득점!";
+    resetRound(room, 1);
+    events.goal = true;
+  }
+
+  if (puckPos.x + toWorld(16) >= maxX && puckPos.y > goalTop && puckPos.y < goalBottom) {
+    state.scores.left += 1;
+    state.status = "플레이어 1 득점!";
+    resetRound(room, -1);
+    events.goal = true;
+  }
+
+  if (state.scores.left >= 7 || state.scores.right >= 7) {
+    state.running = false;
+    state.status = state.scores.left > state.scores.right ? "플레이어 1 승리!" : "플레이어 2 승리!";
+  }
+
+  syncStateFromBodies(room);
   return { state, events };
 };
 
@@ -297,17 +340,8 @@ wss.on("connection", (ws) => {
 
       let room = rooms.get(roomCode);
       if (!room) {
-        room = {
-          hostId: id,
-          clients: new Map(),
-          state: createState(),
-          inputs: {
-            left: { up: false, down: false, left: false, right: false },
-            right: { up: false, down: false, left: false, right: false },
-          },
-          lastSeq: { left: 0, right: 0 },
-          timer: null,
-        };
+        room = createRoom();
+        room.hostId = id;
         rooms.set(roomCode, room);
         ensureRoomLoop(room);
       }
@@ -349,10 +383,17 @@ wss.on("connection", (ws) => {
     if (message.type === "control" && ws.id === room.hostId) {
       if (message.action === "toggle") {
         room.state.running = !room.state.running;
-        room.state.status = room.state.running ? "경기 진행 중!" : "일시정지";
+        if (room.state.running) {
+          const dir = Math.random() > 0.5 ? 1 : -1;
+          resetRound(room, dir);
+          room.state.status = "경기 진행 중!";
+        } else {
+          room.state.status = "일시정지";
+        }
       }
       if (message.action === "reset") {
         room.state = createState();
+        resetRound(room, 1);
       }
       return;
     }
