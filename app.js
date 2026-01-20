@@ -16,7 +16,7 @@ const debugText = document.getElementById("debugText");
 // 입력/상수
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
-const BASE_BUFFER_MS = 20;
+const BASE_BUFFER_MS = 10;
 const ARENA = { width: 900, height: 520 };
 const BOUNDS = {
   minX: 40,
@@ -25,7 +25,7 @@ const BOUNDS = {
   maxY: ARENA.height - 40,
 };
 const PADDLE_SPEED = 6.4;
-const INPUT_BUFFER_MS = 10;
+const INPUT_BUFFER_MS = 0;
 
 // 렌더 상태
 const renderState = {
@@ -462,15 +462,15 @@ const loop = () => {
     }
     localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
 
-    // 서버 스냅샷과 살짝만 맞춰서 장기 드리프트 방지
+    // 서버 스냅샷 보정은 최소화해서 되돌림을 줄인다
     const auth = side === "left" ? sampled.left : sampled.right;
     const error = distance(localPaddle, auth);
-    if (error > 120) {
+    if (error > 220) {
       localPaddle.x = auth.x;
       localPaddle.y = auth.y;
     } else {
-      localPaddle.x = lerp(localPaddle.x, auth.x, 0.08);
-      localPaddle.y = lerp(localPaddle.y, auth.y, 0.08);
+      localPaddle.x = lerp(localPaddle.x, auth.x, 0.04);
+      localPaddle.y = lerp(localPaddle.y, auth.y, 0.04);
     }
 
     if (side === "left") {
