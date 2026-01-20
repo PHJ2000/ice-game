@@ -477,17 +477,15 @@ const loop = () => {
     }
     localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
 
-    // 서버 권위 상태로 보정(드리프트 방지)
-    if (authoritativeState) {
-      const auth = side === "left" ? authoritativeState.left : authoritativeState.right;
-      const error = distance(localPaddle, auth);
-      if (error > 25) {
-        localPaddle.x = auth.x;
-        localPaddle.y = auth.y;
-      } else {
-        localPaddle.x = lerp(localPaddle.x, auth.x, 0.35);
-        localPaddle.y = lerp(localPaddle.y, auth.y, 0.35);
-      }
+    // 보정은 "같은 시간대(버퍼된 스냅샷)" 기준으로만 적용
+    const auth = side === "left" ? sampled.left : sampled.right;
+    const error = distance(localPaddle, auth);
+    if (error > 50) {
+      localPaddle.x = auth.x;
+      localPaddle.y = auth.y;
+    } else {
+      localPaddle.x = lerp(localPaddle.x, auth.x, 0.18);
+      localPaddle.y = lerp(localPaddle.y, auth.y, 0.18);
     }
 
     if (side === "left") {
@@ -525,21 +523,19 @@ const loop = () => {
       }
     }
 
-    // 서버 상태로 천천히 복귀
-    if (authoritativeState) {
-      const authPuck = authoritativeState.puck;
-      const puckError = distance(localPuck, authPuck);
-      if (puckError > 80) {
-        localPuck.x = authPuck.x;
-        localPuck.y = authPuck.y;
-        localPuck.vx = authPuck.vx;
-        localPuck.vy = authPuck.vy;
-      } else {
-        localPuck.x = lerp(localPuck.x, authPuck.x, 0.2);
-        localPuck.y = lerp(localPuck.y, authPuck.y, 0.2);
-        localPuck.vx = lerp(localPuck.vx, authPuck.vx, 0.2);
-        localPuck.vy = lerp(localPuck.vy, authPuck.vy, 0.2);
-      }
+    // 같은 시간대 스냅샷으로만 보정
+    const authPuck = sampled.puck;
+    const puckError = distance(localPuck, authPuck);
+    if (puckError > 120) {
+      localPuck.x = authPuck.x;
+      localPuck.y = authPuck.y;
+      localPuck.vx = authPuck.vx;
+      localPuck.vy = authPuck.vy;
+    } else {
+      localPuck.x = lerp(localPuck.x, authPuck.x, 0.15);
+      localPuck.y = lerp(localPuck.y, authPuck.y, 0.15);
+      localPuck.vx = lerp(localPuck.vx, authPuck.vx, 0.15);
+      localPuck.vy = lerp(localPuck.vy, authPuck.vy, 0.15);
     }
 
     renderState.puck = { ...renderState.puck, ...localPuck };
