@@ -10,7 +10,7 @@ const roomInput = document.getElementById("roomInput");
 const createBtn = document.getElementById("createBtn");
 const joinBtn = document.getElementById("joinBtn");
 const copyLinkBtn = document.getElementById("copyLinkBtn");
-const connectionStatus = document.getElementById("connectionStatus");
+const connectionStatus = document.getElementById("connectionStatus");\r\nconst debugText = document.getElementById("debugText");
 
 // 입력/상수
 const keys = new Set();
@@ -336,7 +336,7 @@ const applyRemoteState = (payload) => {
     state.status = payload.status;
     const dx = payload.right.x - guestRender.x;
     const dy = payload.right.y - guestRender.y;
-    guestSnapNeeded = Math.hypot(dx, dy) > 40;
+    guestSnapNeeded = Math.hypot(dx, dy) > 40;\r\n    lastStateAt = performance.now();
   } else {
     state.left = { ...state.left, ...payload.left };
     state.right = { ...state.right, ...payload.right };
@@ -402,7 +402,12 @@ const sendInput = () => {
 const loop = (time) => {
   const delta = time - lastFrameTime;
   lastFrameTime = time;
-  const scale = Math.min(delta / 16, 2);
+  const scale = Math.min(delta / 16, 2);\r\n  frameCounter += 1;
+  if (time - fpsLastAt >= 500) {
+    fps = Math.round((frameCounter * 1000) / (time - fpsLastAt));
+    frameCounter = 0;
+    fpsLastAt = time;
+  }
 
   if (role === "host") {
     if (state.running) {
@@ -488,7 +493,7 @@ const connect = () => {
 
     if (message.type === "guest-input" && role === "host") {
       if (message.payload && message.payload.input) {
-        Object.assign(guestInput, message.payload.input);
+        Object.assign(guestInput, message.payload.input);\r\n        lastGuestInputAt = performance.now();
       }
     }
 
@@ -615,3 +620,4 @@ if (roomParam) {
 
 resetGame();
 requestAnimationFrame(loop);
+
