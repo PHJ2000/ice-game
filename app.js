@@ -25,7 +25,6 @@ const BOUNDS = {
   maxY: ARENA.height - 40,
 };
 const PADDLE_SPEED = 6.4;
-const PUCK_FRICTION = 0.998;
 const INPUT_BUFFER_MS = 10;
 
 // 렌더 상태
@@ -63,8 +62,6 @@ const MAX_SNAPSHOTS = 20;
 const localPaddle = { x: 140, y: 260, r: 26 };
 let hasLocalPaddle = false;
 let lastLocalUpdateAt = performance.now();
-const localPuck = { x: 450, y: 260, r: 16, vx: 0, vy: 0 };
-let hasLocalPuck = false;
 
 // 입력 히스토리(시간축 보정용)
 const inputHistory = [];
@@ -81,50 +78,7 @@ const lerp = (start, end, t) => start + (end - start) * t;
 const distance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 const hasAnyInput = (state) => state.up || state.down || state.left || state.right;
 
-// 목표 구간 계산
-const goalHeight = 140;
-const goalTop = ARENA.height / 2 - goalHeight / 2;
-const goalBottom = ARENA.height / 2 + goalHeight / 2;
-
-// 로컬 퍽 벽 처리
-const handleLocalPuckWalls = (puck) => {
-  if (puck.y - puck.r <= BOUNDS.minY) {
-    puck.y = BOUNDS.minY + puck.r;
-    puck.vy = Math.abs(puck.vy);
-  }
-  if (puck.y + puck.r >= BOUNDS.maxY) {
-    puck.y = BOUNDS.maxY - puck.r;
-    puck.vy = -Math.abs(puck.vy);
-  }
-
-  const inGoalY = puck.y > goalTop && puck.y < goalBottom;
-  if (!inGoalY && puck.x - puck.r <= BOUNDS.minX) {
-    puck.x = BOUNDS.minX + puck.r;
-    puck.vx = Math.abs(puck.vx);
-  }
-  if (!inGoalY && puck.x + puck.r >= BOUNDS.maxX) {
-    puck.x = BOUNDS.maxX - puck.r;
-    puck.vx = -Math.abs(puck.vx);
-  }
-};
-
-// 로컬 패들-퍽 충돌 예측(시각적 반응용)
-const resolveLocalPuckCollision = (puck, paddle) => {
-  const dx = puck.x - paddle.x;
-  const dy = puck.y - paddle.y;
-  const dist = Math.hypot(dx, dy);
-  const minDist = puck.r + paddle.r;
-  if (dist < minDist) {
-    const angle = Math.atan2(dy, dx);
-    puck.x = paddle.x + Math.cos(angle) * minDist;
-    puck.y = paddle.y + Math.sin(angle) * minDist;
-    const speed = Math.hypot(puck.vx, puck.vy) + 2.2;
-    puck.vx = Math.cos(angle) * speed;
-    puck.vy = Math.sin(angle) * speed;
-    return true;
-  }
-  return false;
-};
+// 로컬 예측은 패들만 사용하고, 퍽은 서버 권위 상태로 그린다.
 
 // 입력 상태를 시간축에 맞게 추출
 const getInputAt = (targetTime) => {
@@ -508,38 +462,22 @@ const loop = () => {
     }
     localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
 
+    // 서버 스냅샷과 살짝만 맞춰서 장기 드리프트 방지
+    const auth = side === "left" ? sampled.left : sampled.right;
+    const error = distance(localPaddle, auth);
+    if (error > 120) {
+      localPaddle.x = auth.x;
+      localPaddle.y = auth.y;
+    } else {
+      localPaddle.x = lerp(localPaddle.x, auth.x, 0.08);
+      localPaddle.y = lerp(localPaddle.y, auth.y, 0.08);
+    }
+
     if (side === "left") {
       renderState.left = { ...renderState.left, x: localPaddle.x, y: localPaddle.y };
     } else {
       renderState.right = { ...renderState.right, x: localPaddle.x, y: localPaddle.y };
     }
-  }
-
-  // 로컬 퍽 예측: 충돌을 즉각적으로 보여주기 위한 시각적 보정
-  if (sampled && sampled.running) {
-    if (!hasLocalPuck) {
-      localPuck.x = sampled.puck.x;
-      localPuck.y = sampled.puck.y;
-      localPuck.r = sampled.puck.r;
-      localPuck.vx = sampled.puck.vx;
-      localPuck.vy = sampled.puck.vy;
-      hasLocalPuck = true;
-    }
-
-    const subSteps = 2;
-    for (let i = 0; i < subSteps; i += 1) {
-      localPuck.x += (localPuck.vx * localDt) / subSteps;
-      localPuck.y += (localPuck.vy * localDt) / subSteps;
-      const friction = Math.pow(PUCK_FRICTION, localDt / subSteps);
-      localPuck.vx *= friction;
-      localPuck.vy *= friction;
-
-      handleLocalPuckWalls(localPuck);
-
-      resolveLocalPuckCollision(localPuck, localPaddle);
-    }
-
-    renderState.puck = { ...renderState.puck, ...localPuck };
   }
 
   if (sampled && !sampled.running && side) {
@@ -548,15 +486,6 @@ const loop = () => {
     localPaddle.y = base.y;
     localPaddle.r = base.r;
     hasLocalPaddle = true;
-
-    localPuck.x = sampled.puck.x;
-    localPuck.y = sampled.puck.y;
-    localPuck.r = sampled.puck.r;
-    localPuck.vx = sampled.puck.vx;
-    localPuck.vy = sampled.puck.vy;
-    hasLocalPuck = true;
-
-    renderState.puck = { ...renderState.puck, ...localPuck };
   }
 
   draw();
