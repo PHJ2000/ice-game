@@ -10,88 +10,51 @@ const roomInput = document.getElementById("roomInput");
 const createBtn = document.getElementById("createBtn");
 const joinBtn = document.getElementById("joinBtn");
 const copyLinkBtn = document.getElementById("copyLinkBtn");
-const connectionStatus = document.getElementById("connectionStatus");\r\nconst debugText = document.getElementById("debugText");
+const connectionStatus = document.getElementById("connectionStatus");
+const debugText = document.getElementById("debugText");
 
 // 입력/상수
-const keys = new Set();
 const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
-const guestInput = { up: false, down: false, left: false, right: false };
+const BUFFER_MS = 100;
 
-// 게임 상태
-const state = {
-  left: { x: 140, y: 260, r: 26, speed: 5.5 },
-  right: { x: 760, y: 260, r: 26, speed: 5.5 },
-  puck: { x: 450, y: 260, r: 16, vx: 4, vy: 2.5 },
-  scores: { left: 0, right: 0 },
-  running: false,
-  status: "스페이스를 누르면 시작!",
-};
-
-// 경기장 경계
-const bounds = {
-  minX: 40,
-  maxX: canvas.width - 40,
-  minY: 40,
-  maxY: canvas.height - 40,
+// 렌더 상태
+const renderState = {
+  left: { x: 140, y: 260, r: 26 },
+  right: { x: 760, y: 260, r: 26 },
+  puck: { x: 450, y: 260, r: 16 },
 };
 
 // 네트워크/동기화
 let socket;
 let role = null;
 let roomCode = "";
-let lastSent = 0;
-let targetState = null;
-let renderRight = { x: state.right.x, y: state.right.y, r: state.right.r };
+let lastSentAt = 0;
+let lastStateAt = 0;
+let lastGuestInputAt = 0;
+
 // 오디오
 let audioReady = false;
 let audioContext;
 let masterGain;
 let bgm;
-let lastScoreLeft = 0;
-let lastScoreRight = 0;
-let lastPingSentAt = 0;
+
+// 핑
 let pingMs = null;
-let lastFrameTime = performance.now();
-let guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
-let guestSnapNeeded = false;
+let lastPingSentAt = 0;
+
+// 스냅샷 버퍼
+const snapshots = [];
+const MAX_SNAPSHOTS = 20;
+
+// FPS
+let frameCounter = 0;
+let fps = 0;
+let fpsLastAt = performance.now();
 
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
-const smoothTo = (current, target, alpha, deadzone = 0.15) => {
-  if (Math.abs(target - current) <= deadzone) return target;
-  return lerp(current, target, alpha);
-};
-
-// 라운드/리셋
-const resetRound = (direction = 1) => {
-  state.left.x = 140;
-  state.left.y = 260;
-  state.right.x = 760;
-  state.right.y = 260;
-  state.puck.x = canvas.width / 2;
-  state.puck.y = canvas.height / 2;
-  state.puck.vx = 4 * direction;
-  state.puck.vy = (Math.random() * 2.5 + 1.5) * (Math.random() > 0.5 ? 1 : -1);
-};
-
-const resetGame = () => {
-  state.scores.left = 0;
-  state.scores.right = 0;
-  scoreLeftEl.textContent = "0";
-  scoreRightEl.textContent = "0";
-  state.running = false;
-  state.status = "스페이스를 누르면 시작!";
-  statusText.textContent = state.status;
-  lastFrameTime = performance.now();
-  targetState = null;
-  renderRight = { x: state.right.x, y: state.right.y, r: state.right.r };
-  guestRender = { x: state.right.x, y: state.right.y, r: state.right.r };
-  guestSnapNeeded = false;
-  resetRound();
-  sendState();
-};
 
 // 오디오 초기화/효과음
 const initAudio = () => {
@@ -132,152 +95,82 @@ const playWall = () => playTone(360, 0.08, 0.12);
 const playPaddle = () => playTone(520, 0.09, 0.18);
 const playGoal = () => playTone(220, 0.22, 0.3);
 
-// 입력을 패들에 적용
-const applyInputToPaddle = (paddle, input, scale = 1) => {
-  const speed = paddle.speed * scale;
-  if (input.up) paddle.y -= speed;
-  if (input.down) paddle.y += speed;
-  if (input.left) paddle.x -= speed;
-  if (input.right) paddle.x += speed;
-  return paddle;
+// 메시지 전송
+const sendMessage = (data) => {
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify(data));
+  }
 };
 
-// 패들 이동(호스트)
-const movePaddles = (scale = 1) => {
-  const left = applyInputToPaddle(state.left, inputState, scale);
-  const right = applyInputToPaddle(state.right, guestInput, scale);
-
-  left.x = clamp(left.x, bounds.minX, canvas.width / 2 - 40);
-  left.y = clamp(left.y, bounds.minY, bounds.maxY);
-  right.x = clamp(right.x, canvas.width / 2 + 40, bounds.maxX);
-  right.y = clamp(right.y, bounds.minY, bounds.maxY);
+// 핑 측정(왕복 지연)
+const sendPing = () => {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  lastPingSentAt = performance.now();
+  sendMessage({ type: "ping", at: lastPingSentAt });
 };
 
-// 게스트 로컬 렌더 이동(예측)
-const moveGuestRender = (input, deltaMs) => {
-  const scale = deltaMs / 16;
-  applyInputToPaddle(guestRender, input, scale);
-  guestRender.x = clamp(guestRender.x, canvas.width / 2 + 40, bounds.maxX);
-  guestRender.y = clamp(guestRender.y, bounds.minY, bounds.maxY);
+// 게스트 입력 전송
+const sendInput = () => {
+  if (!role || !roomCode) return;
+  sendMessage({
+    type: "input",
+    room: roomCode,
+    payload: { input: { ...inputState } },
+  });
 };
 
-// 벽 충돌 처리
-const handleWallCollision = () => {
-  const puck = state.puck;
-  let bounced = false;
-  if (puck.y - puck.r <= bounds.minY) {
-    puck.y = bounds.minY + puck.r;
-    puck.vy = Math.abs(puck.vy);
-    bounced = true;
+// 스냅샷 저장
+const pushSnapshot = (payload) => {
+  snapshots.push({ time: payload.time, state: payload });
+  while (snapshots.length > MAX_SNAPSHOTS) {
+    snapshots.shift();
   }
-  if (puck.y + puck.r >= bounds.maxY) {
-    puck.y = bounds.maxY - puck.r;
-    puck.vy = -Math.abs(puck.vy);
-    bounced = true;
-  }
-  return bounced;
 };
 
-// 좌우 벽 충돌 처리(골문 제외)
-const handleSideWalls = () => {
-  const puck = state.puck;
-  const goalHeight = 140;
-  const goalTop = canvas.height / 2 - goalHeight / 2;
-  const goalBottom = canvas.height / 2 + goalHeight / 2;
-  const inGoalY = puck.y > goalTop && puck.y < goalBottom;
-  let bounced = false;
+// 렌더용 상태 보간
+const sampleState = (renderTime) => {
+  if (snapshots.length === 0) return null;
+  if (snapshots.length === 1) return snapshots[0].state;
 
-  if (!inGoalY && puck.x - puck.r <= bounds.minX) {
-    puck.x = bounds.minX + puck.r;
-    puck.vx = Math.abs(puck.vx);
-    bounced = true;
+  let older = snapshots[0];
+  let newer = snapshots[snapshots.length - 1];
+  for (let i = snapshots.length - 1; i >= 0; i -= 1) {
+    if (snapshots[i].time <= renderTime) {
+      older = snapshots[i];
+      newer = snapshots[i + 1] || snapshots[i];
+      break;
+    }
   }
 
-  if (!inGoalY && puck.x + puck.r >= bounds.maxX) {
-    puck.x = bounds.maxX - puck.r;
-    puck.vx = -Math.abs(puck.vx);
-    bounced = true;
-  }
-  return bounced;
-};
+  const span = newer.time - older.time || 1;
+  const t = clamp((renderTime - older.time) / span, 0, 1);
+  const a = older.state;
+  const b = newer.state;
 
-// 득점 처리
-const handleGoal = () => {
-  const puck = state.puck;
-  const goalHeight = 140;
-  const goalTop = canvas.height / 2 - goalHeight / 2;
-  const goalBottom = canvas.height / 2 + goalHeight / 2;
-
-  if (puck.x - puck.r <= 20 && puck.y > goalTop && puck.y < goalBottom) {
-    state.scores.right += 1;
-    scoreRightEl.textContent = state.scores.right.toString();
-    state.status = "플레이어 2 득점!";
-    resetRound(1);
-    return "right";
-  }
-
-  if (puck.x + puck.r >= canvas.width - 20 && puck.y > goalTop && puck.y < goalBottom) {
-    state.scores.left += 1;
-    scoreLeftEl.textContent = state.scores.left.toString();
-    state.status = "플레이어 1 득점!";
-    resetRound(-1);
-    return "left";
-  }
-
-  if (state.scores.left >= maxScore || state.scores.right >= maxScore) {
-    state.running = false;
-    state.status = state.scores.left > state.scores.right ? "플레이어 1 승리!" : "플레이어 2 승리!";
-  }
-  return null;
-};
-
-// 패들 충돌 처리
-const resolveCollision = (paddle) => {
-  const puck = state.puck;
-  const dx = puck.x - paddle.x;
-  const dy = puck.y - paddle.y;
-  const dist = Math.hypot(dx, dy);
-  const minDist = puck.r + paddle.r;
-
-  if (dist < minDist) {
-    const angle = Math.atan2(dy, dx);
-    const targetX = paddle.x + Math.cos(angle) * minDist;
-    const targetY = paddle.y + Math.sin(angle) * minDist;
-    puck.x = targetX;
-    puck.y = targetY;
-
-    const speed = Math.hypot(puck.vx, puck.vy);
-    const extra = 0.8;
-    puck.vx = Math.cos(angle) * (speed + extra);
-    puck.vy = Math.sin(angle) * (speed + extra);
-    return true;
-  }
-  return false;
-};
-
-// 퍽 물리 업데이트(호스트)
-const updatePuck = () => {
-  const puck = state.puck;
-  const steps = 3;
-  let wallHit = false;
-  let paddleHit = false;
-  let goalHit = false;
-
-  for (let i = 0; i < steps; i += 1) {
-    puck.x += puck.vx / steps;
-    puck.y += puck.vy / steps;
-
-    puck.vx *= 0.995;
-    puck.vy *= 0.995;
-
-    wallHit = handleWallCollision() || handleSideWalls() || wallHit;
-    paddleHit = resolveCollision(state.left) || resolveCollision(state.right) || paddleHit;
-    goalHit = handleGoal() || goalHit;
-  }
-
-  if (wallHit) playWall();
-  if (paddleHit) playPaddle();
-  if (goalHit) playGoal();
+  return {
+    time: renderTime,
+    running: b.running,
+    status: b.status,
+    scores: b.scores,
+    events: b.events,
+    left: {
+      x: lerp(a.left.x, b.left.x, t),
+      y: lerp(a.left.y, b.left.y, t),
+      r: b.left.r,
+    },
+    right: {
+      x: lerp(a.right.x, b.right.x, t),
+      y: lerp(a.right.y, b.right.y, t),
+      r: b.right.r,
+    },
+    puck: {
+      x: lerp(a.puck.x, b.puck.x, t),
+      y: lerp(a.puck.y, b.puck.y, t),
+      r: b.puck.r,
+      vx: b.puck.vx,
+      vy: b.puck.vy,
+    },
+  };
 };
 
 // 렌더링
@@ -301,19 +194,17 @@ const draw = () => {
 
   ctx.fillStyle = "#ff7b2f";
   ctx.beginPath();
-  ctx.arc(state.left.x, state.left.y, state.left.r, 0, Math.PI * 2);
+  ctx.arc(renderState.left.x, renderState.left.y, renderState.left.r, 0, Math.PI * 2);
   ctx.fill();
 
-  const rightPaddle =
-    role === "guest" ? guestRender || state.right : renderRight;
   ctx.fillStyle = "#263e59";
   ctx.beginPath();
-  ctx.arc(rightPaddle.x, rightPaddle.y, rightPaddle.r, 0, Math.PI * 2);
+  ctx.arc(renderState.right.x, renderState.right.y, renderState.right.r, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = "#10172b";
   ctx.beginPath();
-  ctx.arc(state.puck.x, state.puck.y, state.puck.r, 0, Math.PI * 2);
+  ctx.arc(renderState.puck.x, renderState.puck.y, renderState.puck.r, 0, Math.PI * 2);
   ctx.fill();
 
   const goalHeight = 140;
@@ -322,122 +213,6 @@ const draw = () => {
   ctx.fillRect(20, goalTop, 20, goalHeight);
   ctx.fillStyle = "rgba(38, 62, 89, 0.15)";
   ctx.fillRect(canvas.width - 40, goalTop, 20, goalHeight);
-};
-
-// 원격 상태 적용(게스트)
-const applyRemoteState = (payload) => {
-  const prevLeft = state.scores.left;
-  const prevRight = state.scores.right;
-
-  if (role === "guest") {
-    targetState = payload;
-    state.scores = payload.scores;
-    state.running = payload.running;
-    state.status = payload.status;
-    const dx = payload.right.x - guestRender.x;
-    const dy = payload.right.y - guestRender.y;
-    guestSnapNeeded = Math.hypot(dx, dy) > 40;\r\n    lastStateAt = performance.now();
-  } else {
-    state.left = { ...state.left, ...payload.left };
-    state.right = { ...state.right, ...payload.right };
-    state.puck = { ...state.puck, ...payload.puck };
-    state.scores = payload.scores;
-    state.running = payload.running;
-    state.status = payload.status;
-  }
-  scoreLeftEl.textContent = state.scores.left.toString();
-  scoreRightEl.textContent = state.scores.right.toString();
-  statusText.textContent = state.status;
-
-  const scored = state.scores.left !== prevLeft || state.scores.right !== prevRight;
-  if (scored) playGoal();
-  lastScoreLeft = state.scores.left;
-  lastScoreRight = state.scores.right;
-};
-
-// 메시지 전송
-const sendMessage = (data) => {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify(data));
-  }
-};
-
-// 핑 측정(왕복 지연)
-const sendPing = () => {
-  if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  lastPingSentAt = performance.now();
-  sendMessage({ type: "ping", at: lastPingSentAt });
-};
-
-// 호스트 상태 브로드캐스트
-const sendState = () => {
-  if (role !== "host") return;
-  sendMessage({
-    type: "state",
-    room: roomCode,
-    payload: {
-      left: state.left,
-      right: state.right,
-      puck: state.puck,
-      scores: state.scores,
-      running: state.running,
-      status: state.status,
-    },
-  });
-};
-
-// 게스트 입력 전송
-const sendInput = () => {
-  if (role !== "guest" || !roomCode) return;
-  sendMessage({
-    type: "input",
-    room: roomCode,
-    payload: {
-      input: { ...inputState },
-    },
-  });
-};
-
-// 게임 루프
-const loop = (time) => {
-  const delta = time - lastFrameTime;
-  lastFrameTime = time;
-  const scale = Math.min(delta / 16, 2);\r\n  frameCounter += 1;
-  if (time - fpsLastAt >= 500) {
-    fps = Math.round((frameCounter * 1000) / (time - fpsLastAt));
-    frameCounter = 0;
-    fpsLastAt = time;
-  }
-
-  if (role === "host") {
-    if (state.running) {
-      movePaddles(scale);
-      updatePuck();
-    }
-    if (time - lastSent > 16) {
-      sendState();
-      lastSent = time;
-    }
-    renderRight.x = smoothTo(renderRight.x, state.right.x, 0.7, 0);
-    renderRight.y = smoothTo(renderRight.y, state.right.y, 0.7, 0);
-    renderRight.r = state.right.r;
-  }
-
-  if (role === "guest" && targetState) {
-    moveGuestRender(inputState, delta);
-    if (guestSnapNeeded) {
-      guestRender.x = targetState.right.x;
-      guestRender.y = targetState.right.y;
-      guestSnapNeeded = false;
-    }
-    guestRender.r = targetState.right.r;
-    state.left = { ...state.left, ...targetState.left };
-    state.right = { ...state.right, ...targetState.right };
-    state.puck = { ...state.puck, ...targetState.puck };
-  }
-
-  draw();
-  requestAnimationFrame(loop);
 };
 
 // 연결 상태 표시
@@ -466,39 +241,51 @@ const connect = () => {
       pingValueEl.textContent = `${pingMs}ms`;
       return;
     }
+
     if (message.type === "role") {
       role = message.role;
       setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
       statusText.textContent =
         role === "host" ? "게스트 대기 중. 스페이스로 시작!" : "호스트가 시작하면 게임 시작.";
+      return;
     }
 
     if (message.type === "full") {
       setConnectionStatus("방이 가득 찼어요");
+      return;
     }
 
     if (message.type === "guest-joined") {
       statusText.textContent = "게스트 입장! 스페이스로 시작!";
+      return;
     }
 
     if (message.type === "guest-left") {
       statusText.textContent = "게스트가 나갔어요.";
-      state.running = false;
+      return;
     }
 
     if (message.type === "host-left") {
       statusText.textContent = "호스트가 나갔어요. 새 방을 만들어주세요.";
-      state.running = false;
+      return;
     }
 
-    if (message.type === "guest-input" && role === "host") {
-      if (message.payload && message.payload.input) {
-        Object.assign(guestInput, message.payload.input);\r\n        lastGuestInputAt = performance.now();
+    if (message.type === "state") {
+      lastStateAt = performance.now();
+      pushSnapshot(message.payload);
+      scoreLeftEl.textContent = message.payload.scores.left.toString();
+      scoreRightEl.textContent = message.payload.scores.right.toString();
+      statusText.textContent = message.payload.status;
+
+      if (message.payload.events) {
+        if (message.payload.events.wall) playWall();
+        if (message.payload.events.paddle) playPaddle();
+        if (message.payload.events.goal) playGoal();
       }
     }
 
-    if (message.type === "state" && role === "guest") {
-      applyRemoteState(message.payload);
+    if (message.type === "guest-input" && role === "host") {
+      lastGuestInputAt = performance.now();
     }
   });
 
@@ -558,48 +345,64 @@ document.addEventListener("keydown", (event) => {
   }
   if (key === " ") {
     if (role === "host") {
-      state.running = !state.running;
-      state.status = state.running ? "경기 진행 중!" : "일시정지";
-      statusText.textContent = state.status;
-      sendState();
+      sendMessage({ type: "control", action: "toggle", room: roomCode });
     }
     return;
   }
-  if (role === "host") {
-    if (key === "w") inputState.up = true;
-    if (key === "s") inputState.down = true;
-    if (key === "a") inputState.left = true;
-    if (key === "d") inputState.right = true;
-  }
-
-  if (role === "guest") {
-    if (key === "w") inputState.up = true;
-    if (key === "s") inputState.down = true;
-    if (key === "a") inputState.left = true;
-    if (key === "d") inputState.right = true;
-    sendInput();
-  }
+  if (key === "w") inputState.up = true;
+  if (key === "s") inputState.down = true;
+  if (key === "a") inputState.left = true;
+  if (key === "d") inputState.right = true;
+  sendInput();
 });
 
 document.addEventListener("keyup", (event) => {
   const key = event.key.toLowerCase();
-  if (role === "host") {
-    if (key === "w") inputState.up = false;
-    if (key === "s") inputState.down = false;
-    if (key === "a") inputState.left = false;
-    if (key === "d") inputState.right = false;
-  }
-
-  if (role === "guest") {
-    if (key === "w") inputState.up = false;
-    if (key === "s") inputState.down = false;
-    if (key === "a") inputState.left = false;
-    if (key === "d") inputState.right = false;
-    sendInput();
-  }
+  if (key === "w") inputState.up = false;
+  if (key === "s") inputState.down = false;
+  if (key === "a") inputState.left = false;
+  if (key === "d") inputState.right = false;
+  sendInput();
 });
 
-resetBtn.addEventListener("click", resetGame);
+// 게임 루프
+const loop = () => {
+  const now = Date.now();
+  const renderTime = now - BUFFER_MS;
+
+  frameCounter += 1;
+  const perfNow = performance.now();
+  if (perfNow - fpsLastAt >= 500) {
+    fps = Math.round((frameCounter * 1000) / (perfNow - fpsLastAt));
+    frameCounter = 0;
+    fpsLastAt = perfNow;
+  }
+
+  const sampled = sampleState(renderTime);
+  if (sampled) {
+    renderState.left = sampled.left;
+    renderState.right = sampled.right;
+    renderState.puck = sampled.puck;
+  }
+
+  draw();
+
+  if (debugText) {
+    const wsState = socket && socket.readyState === WebSocket.OPEN ? "연결됨" : "미연결";
+    const sinceState = lastStateAt ? Math.round(performance.now() - lastStateAt) : "-";
+    const sinceGuestInput = lastGuestInputAt ? Math.round(performance.now() - lastGuestInputAt) : "-";
+    debugText.textContent =
+      `역할: ${role || "미정"} / WS: ${wsState}\n` +
+      `FPS: ${fps} / 핑: ${pingMs ?? "-"}ms\n` +
+      `게스트 입력 수신: ${sinceGuestInput}ms 전\n` +
+      `상태 수신: ${sinceState}ms 전\n` +
+      `스냅샷 버퍼: ${snapshots.length}개`;
+  }
+
+  requestAnimationFrame(loop);
+};
+
+resetBtn.addEventListener("click", () => sendMessage({ type: "control", action: "reset", room: roomCode }));
 createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
 joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
 copyLinkBtn.addEventListener("click", copyShareLink);
@@ -618,6 +421,4 @@ if (roomParam) {
   connect();
 }
 
-resetGame();
 requestAnimationFrame(loop);
-

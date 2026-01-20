@@ -3,26 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ì—ì–´í•˜í‚¤ 1:1</title>
+    <title>¿¡¾îÇÏÅ° 1:1</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <div class="page">
       <header class="topbar">
         <div class="brand">
-          <span class="logo">ðŸ’</span>
+          <span class="logo">AH</span>
           <div>
-            <div class="brand-title">ì—ì–´í•˜í‚¤ 1:1</div>
-            <div class="brand-subtitle">ì˜¨ë¼ì¸ ëŒ€ê²°</div>
+            <div class="brand-title">¿¡¾îÇÏÅ° 1:1</div>
+            <div class="brand-subtitle">¿Â¶óÀÎ ´ë°á</div>
           </div>
         </div>
-        <button class="ghost" id="resetBtn">ë¦¬ì…‹</button>
+        <button class="ghost" id="resetBtn">¸®¼Â</button>
       </header>
 
       <section class="panel">
         <div class="panel-head">
-          <h1>ì¹œêµ¬ì™€ 1:1 ì—ì–´í•˜í‚¤ ëŒ€ê²°</h1>
-          <p>ì™¼ìª½ í”Œë ˆì´ì–´: WASD Â· ì˜¤ë¥¸ìª½ í”Œë ˆì´ì–´: WASD Â· ëª©í‘œ ì ìˆ˜ 7ì </p>
+          <h1>Ä£±¸¿Í 1:1 ¿¡¾îÇÏÅ° ´ë°á</h1>
+          <p>¿ÞÂÊ ÇÃ·¹ÀÌ¾î: WASD ¡¤ ¿À¸¥ÂÊ ÇÃ·¹ÀÌ¾î: WASD ¡¤ ¸ñÇ¥ Á¡¼ö 7Á¡</p>
         </div>
 
         <div class="room-controls">
@@ -30,49 +30,49 @@
             id="roomInput"
             type="text"
             maxlength="6"
-            placeholder="ë°© ì½”ë“œ (ì˜ˆ: A7K9)"
-            aria-label="ë°© ì½”ë“œ ìž…ë ¥"
+            placeholder="¹æ ÄÚµå (¿¹: A7K9)"
+            aria-label="¹æ ÄÚµå ÀÔ·Â"
           />
-          <button class="pill" id="createBtn">ë°© ë§Œë“¤ê¸°</button>
-          <button class="ghost" id="joinBtn">ì°¸ê°€</button>
-          <button class="ghost" id="copyLinkBtn">ë§í¬ ë³µì‚¬</button>
-          <span class="connection" id="connectionStatus">ì—°ê²° ëŒ€ê¸° ì¤‘</span>
+          <button class="pill" id="createBtn">¹æ ¸¸µé±â</button>
+          <button class="ghost" id="joinBtn">Âü°¡</button>
+          <button class="ghost" id="copyLinkBtn">¸µÅ© º¹»ç</button>
+          <span class="connection" id="connectionStatus">¿¬°á ´ë±â Áß</span>
         </div>
 
         <div class="scoreboard">
           <div class="score">
-            <span>í”Œë ˆì´ì–´ 1</span>
+            <span>ÇÃ·¹ÀÌ¾î 1</span>
             <strong id="scoreLeft">0</strong>
           </div>
           <div class="score">
-            <span>í”Œë ˆì´ì–´ 2</span>
+            <span>ÇÃ·¹ÀÌ¾î 2</span>
             <strong id="scoreRight">0</strong>
           </div>
           <div class="score">
-            <span>í•‘</span>
+            <span>ÇÎ</span>
             <strong id="pingValue">-</strong>
           </div>
         </div>
 
         <div class="arena-wrap">
           <canvas id="arena" width="900" height="520"></canvas>
-          <div class="status" id="statusText">ìŠ¤íŽ˜ì´ìŠ¤ë¥¼ ëˆ„ë¥´ë©´ ì‹œìž‘!</div>
+          <div class="status" id="statusText">½ºÆäÀÌ½º¸¦ ´©¸£¸é ½ÃÀÛ!</div>
         </div>
       </section>
 
       <section class="tips">
-        <h2>í”Œë ˆì´ íŒ</h2>
+        <h2>ÇÃ·¹ÀÌ ÆÁ</h2>
         <ul>
-          <li>ë°© ë§Œë“¤ê¸° â†’ ë§í¬ ë³µì‚¬ â†’ ì¹œêµ¬ì—ê²Œ ì „ë‹¬í•˜ë©´ ë°”ë¡œ ì°¸ê°€ ê°€ëŠ¥.</li>
-          <li>íŒ¨ë“¤ì˜ ì¤‘ì•™ìœ¼ë¡œ í½ì„ ë§žížˆë©´ ë” ë©€ë¦¬ ë‚ ì•„ê°€ìš”.</li>
-          <li>ìˆ˜ë¹„ëŠ” ê³¨ë¬¸ ì¤‘ì•™ì„ ë¨¼ì € ì§€í‚¤ëŠ” ê²Œ ì•ˆì •ì ì´ì—ìš”.</li>
-          <li>ìŠ¤íŽ˜ì´ìŠ¤ë¡œ ì¼ì‹œì •ì§€/ìž¬ê°œê°€ ê°€ëŠ¥í•©ë‹ˆë‹¤.</li>
+          <li>¹æ ¸¸µé±â ÈÄ ¸µÅ© º¹»ç·Î Ä£±¸¿¡°Ô º¸³»¸é ¹Ù·Î Âü°¡ °¡´ÉÇØ¿ä.</li>
+          <li>»ó´ë Áø¿µÀ¸·Î °øÀ» ¹Ð¾î ³ÖÀ¸¸é µæÁ¡ÇÕ´Ï´Ù.</li>
+          <li>º® Æ¨±è°ú ÆÐµé Ãæµ¹ Å¸ÀÌ¹ÖÀÌ Áß¿äÇØ¿ä.</li>
+          <li>½ºÆäÀÌ½º·Î ÀÏ½ÃÁ¤Áö/Àç°³ÇÒ ¼ö ÀÖ¾î¿ä.</li>
         </ul>
       </section>
 
       <section class="debug-panel">
-        <h2>ë””ë²„ê·¸</h2>
-        <pre id="debugText">ëŒ€ê¸° ì¤‘...</pre>
+        <h2>µð¹ö±×</h2>
+        <pre id="debugText">´ë±â Áß...</pre>
       </section>
     </div>
 
