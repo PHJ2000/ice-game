@@ -313,7 +313,7 @@ const stepRoom = (room) => {
   applyPaddleInput(leftBody, room.inputs.left, "left");
   applyPaddleInput(rightBody, room.inputs.right, "right");
 
-  world.step();
+  world.step(eventQueue);
   consumeCollisionEvents(room);
 
   const puckVel = puckBody.linvel();
