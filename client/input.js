@@ -1,11 +1,21 @@
 window.Game = window.Game || {};
 
 window.Game.Input = (() => {
-  const create = ({ onToggle, onInput, initAudio, canvas, getPaddlePosition, getSide, getPaddleRadius }) => {
+  const create = ({
+    onToggle,
+    onInput,
+    onMove,
+    initAudio,
+    canvas,
+    getPaddlePosition,
+    getSide,
+    getPaddleRadius,
+  }) => {
     const state = { up: false, down: false, left: false, right: false };
     let dirty = false;
     let dragging = false;
     let activePointerId = null;
+    let pointerPos = null;
 
     const setState = (key, value) => {
       if (state[key] !== value) {
@@ -64,9 +74,9 @@ window.Game.Input = (() => {
 
       dragging = true;
       activePointerId = event.pointerId;
+      pointerPos = pos;
       canvas.setPointerCapture(activePointerId);
-      applyPointerInput(pos);
-      onInput(true);
+      if (onMove) onMove(pos);
       event.preventDefault();
     };
 
@@ -74,16 +84,17 @@ window.Game.Input = (() => {
       if (!dragging || event.pointerId !== activePointerId) return;
       const pos = getCanvasPosition(event);
       if (!pos) return;
-      applyPointerInput(pos);
-      onInput(true);
+      pointerPos = pos;
+      if (onMove) onMove(pos);
     };
 
     const handlePointerUp = (event) => {
       if (!dragging || event.pointerId !== activePointerId) return;
       dragging = false;
       activePointerId = null;
+      pointerPos = null;
       resetState();
-      onInput(true);
+      if (onMove) onMove(null);
       event.preventDefault();
     };
 
@@ -104,6 +115,7 @@ window.Game.Input = (() => {
       if (key === "s") setState("down", true);
       if (key === "a") setState("left", true);
       if (key === "d") setState("right", true);
+      pointerPos = null;
       onInput(true);
     };
 
@@ -133,6 +145,8 @@ window.Game.Input = (() => {
 
     return {
       getState: () => ({ ...state }),
+      getPointerPos: () => (pointerPos ? { ...pointerPos } : null),
+      isDragging: () => dragging,
       isDirty: () => dirty,
       clearDirty: () => {
         dirty = false;

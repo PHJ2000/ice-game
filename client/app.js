@@ -75,6 +75,24 @@ window.Game = window.Game || {};
   let hitFlashUntil = 0;
   let lastInputSentAt = performance.now();
 
+  const BOUNDS = {
+    minX: WALL,
+    maxX: ARENA.width - WALL,
+    minY: WALL,
+    maxY: ARENA.height - WALL,
+  };
+
+  const clampToSide = (pos) => {
+    if (!pos || !side) return null;
+    const mid = ARENA.width / 2;
+    const minX = side === "left" ? BOUNDS.minX : mid + WALL;
+    const maxX = side === "left" ? mid - WALL : BOUNDS.maxX;
+    return {
+      x: Utils.clamp(pos.x, minX, maxX),
+      y: Utils.clamp(pos.y, BOUNDS.minY, BOUNDS.maxY),
+    };
+  };
+
   const applyStateSnapshot = (state) => {
     if (!state) return;
     const leftPlayer = state.leftId ? state.players.get(state.leftId) : null;
@@ -168,12 +186,25 @@ window.Game = window.Game || {};
     getSide: () => side,
     getPaddlePosition: (which) => (which === "left" ? renderState.left : renderState.right),
     getPaddleRadius: () => PADDLE_RADIUS,
+    onMove: (pos) => {
+      if (!network.isJoined()) return;
+      if (!pos) {
+        network.send("move", { x: null, y: null });
+        return;
+      }
+      const clamped = clampToSide(pos);
+      if (!clamped) return;
+      network.send("move", clamped);
+    },
     onToggle: () => {
       if (role === "host") {
         network.send("control", { action: "toggle" });
       }
     },
     onInput: (force) => {
+      if (force) {
+        network.send("move", { x: null, y: null });
+      }
       maybeSendInput(force);
     },
   });
@@ -240,6 +271,18 @@ window.Game = window.Game || {};
       renderState.left = sampled.left;
       renderState.right = sampled.right;
       renderState.puck = sampled.puck;
+    }
+
+    if (side && input.isDragging()) {
+      const pointerPos = input.getPointerPos();
+      const clamped = clampToSide(pointerPos);
+      if (clamped) {
+        if (side === "left") {
+          renderState.left = { ...renderState.left, x: clamped.x, y: clamped.y };
+        } else {
+          renderState.right = { ...renderState.right, x: clamped.x, y: clamped.y };
+        }
+      }
     }
 
     renderer.draw(renderState, hitFlashUntil);

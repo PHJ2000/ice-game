@@ -206,6 +206,28 @@ const applyPaddleInput = (body, input, side) => {
   body.setNextKinematicTranslation(new RAPIER.Vector2(nextX, nextY));
 };
 
+const applyPaddleTarget = (body, target, side) => {
+  if (!target) return false;
+  const minY = toWorld(WALL);
+  const maxY = toWorld(ARENA.height - WALL);
+  const minX = toWorld(WALL);
+  const maxX = toWorld(ARENA.width - WALL);
+  const mid = toWorld(ARENA.width / 2);
+
+  let nextX = toWorld(target.x);
+  let nextY = toWorld(target.y);
+
+  if (side === "left") {
+    nextX = clamp(nextX, minX, mid - toWorld(WALL));
+  } else {
+    nextX = clamp(nextX, mid + toWorld(WALL), maxX);
+  }
+  nextY = clamp(nextY, minY, maxY);
+
+  body.setNextKinematicTranslation(new RAPIER.Vector2(nextX, nextY));
+  return true;
+};
+
 const resetRound = (room, direction) => {
   const { leftBody, rightBody, puckBody } = room.physics;
 
@@ -298,6 +320,7 @@ class GameRoom extends Room {
       left: { up: false, down: false, left: false, right: false },
       right: { up: false, down: false, left: false, right: false },
     };
+    this.targets = { left: null, right: null };
     this.physics = createPhysicsWorld();
     this.lastCollisionLogAt = 0;
 
@@ -310,6 +333,18 @@ class GameRoom extends Room {
         left: Boolean(message.left),
         right: Boolean(message.right),
       };
+      this.targets[side] = null;
+      this.state.time = Date.now();
+    });
+
+    this.onMessage("move", (client, message) => {
+      const side = this.getSide(client.sessionId);
+      if (!side) return;
+      if (!message || !Number.isFinite(message.x) || !Number.isFinite(message.y)) {
+        this.targets[side] = null;
+        return;
+      }
+      this.targets[side] = { x: message.x, y: message.y };
       this.state.time = Date.now();
     });
 
@@ -409,8 +444,14 @@ class GameRoom extends Room {
     const { world, eventQueue, leftBody, rightBody, puckBody } = this.physics;
 
     if (state.running) {
-      applyPaddleInput(leftBody, this.inputs.left, "left");
-      applyPaddleInput(rightBody, this.inputs.right, "right");
+      const leftMoved = applyPaddleTarget(leftBody, this.targets.left, "left");
+      const rightMoved = applyPaddleTarget(rightBody, this.targets.right, "right");
+      if (!leftMoved) {
+        applyPaddleInput(leftBody, this.inputs.left, "left");
+      }
+      if (!rightMoved) {
+        applyPaddleInput(rightBody, this.inputs.right, "right");
+      }
 
       world.step(eventQueue);
       const events = consumeCollisionEvents(this);
