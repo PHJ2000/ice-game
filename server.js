@@ -195,6 +195,7 @@ const createRoom = () => {
     lastSeq: { left: 0, right: 0 },
     lastSnapshotAt: Date.now(),
     lastCollisionLogAt: 0,
+    eventLatch: { wall: false, paddle: false, goal: false },
     timer: null,
     physics,
     events,
@@ -271,6 +272,7 @@ const consumeCollisionEvents = (room) => {
     const typeB = colliderB?.userData?.type;
     if ((typeA === "puck" && typeB === "paddle") || (typeA === "paddle" && typeB === "puck")) {
       events.paddle = true;
+      room.eventLatch.paddle = true;
       if (DEBUG_COLLISION) {
         const now = Date.now();
         if (now - room.lastCollisionLogAt > 200) {
@@ -290,6 +292,7 @@ const consumeCollisionEvents = (room) => {
     }
     if ((typeA === "puck" && typeB === "wall") || (typeA === "wall" && typeB === "puck")) {
       events.wall = true;
+      room.eventLatch.wall = true;
     }
   });
 };
@@ -331,6 +334,7 @@ const stepRoom = (room) => {
     state.status = "플레이어 2 득점!";
     resetRound(room, 1);
     events.goal = true;
+    room.eventLatch.goal = true;
   }
 
   if (puckPos.x + PUCK_RADIUS >= maxX && puckPos.y > goalTop && puckPos.y < goalBottom) {
@@ -338,6 +342,7 @@ const stepRoom = (room) => {
     state.status = "플레이어 1 득점!";
     resetRound(room, -1);
     events.goal = true;
+    room.eventLatch.goal = true;
   }
 
   if (state.scores.left >= 7 || state.scores.right >= 7) {
@@ -357,6 +362,8 @@ const ensureRoomLoop = (room) => {
     const now = Date.now();
     if (now - room.lastSnapshotAt >= SNAPSHOT_INTERVAL_MS) {
       room.lastSnapshotAt = now;
+      const latched = room.eventLatch;
+      room.eventLatch = { wall: false, paddle: false, goal: false };
       const payload = {
         left: state.left,
         right: state.right,
@@ -364,7 +371,11 @@ const ensureRoomLoop = (room) => {
         scores: state.scores,
         running: state.running,
         status: state.status,
-        events,
+        events: {
+          wall: events.wall || latched.wall,
+          paddle: events.paddle || latched.paddle,
+          goal: events.goal || latched.goal,
+        },
         acks: { left: room.lastSeq.left, right: room.lastSeq.right },
         time: now,
       };
