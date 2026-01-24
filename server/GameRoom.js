@@ -534,7 +534,7 @@ class GameRoom extends Room {
         if (leftInGoal) {
           state.scoreRight += 1;
           state.status = "플레이어 2 득점! 3초 후 재개";
-          this.pendingResetAt = Date.now() + 3000;
+          this.pendingResetAt = Date.now() + 1500;
           this.pendingDirection = 1;
           resetPuck(this, 1, true);
           events.goal = true;
@@ -544,7 +544,7 @@ class GameRoom extends Room {
         if (rightInGoal) {
           state.scoreLeft += 1;
           state.status = "플레이어 1 득점! 3초 후 재개";
-          this.pendingResetAt = Date.now() + 3000;
+          this.pendingResetAt = Date.now() + 1500;
           this.pendingDirection = -1;
           resetPuck(this, -1, true);
           events.goal = true;
