@@ -20,6 +20,7 @@ const PADDLE_RADIUS = CONFIG.PADDLE_RADIUS;
 const PADDLE_SPEED_PX_PER_FRAME = CONFIG.PADDLE_SPEED_PX_PER_FRAME;
 const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
 const PADDLE_SPEED = PADDLE_SPEED_PX_PER_SEC * SCALE;
+const KEYBOARD_MULTIPLIER = 1.2;
 
 const PUCK_RADIUS_PX = CONFIG.PUCK_RADIUS;
 const PUCK_RADIUS = PUCK_RADIUS_PX * SCALE;
@@ -185,7 +186,7 @@ const applyPaddleInput = (body, input, side, dt) => {
   let nextX = current.x;
   let nextY = current.y;
 
-  const step = PADDLE_SPEED * dt;
+  const step = PADDLE_SPEED * dt * KEYBOARD_MULTIPLIER;
   if (input.left) nextX -= step;
   if (input.right) nextX += step;
   if (input.up) nextY -= step;
@@ -196,13 +197,23 @@ const applyPaddleInput = (body, input, side, dt) => {
   const minX = toWorld(WALL);
   const maxX = toWorld(ARENA.width - WALL);
   const mid = toWorld(ARENA.width / 2);
+  const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
+  const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
+  const goalGuard = toWorld(PADDLE_RADIUS);
 
   if (side === "left") {
-    nextX = clamp(nextX, minX, mid - toWorld(WALL));
+    nextX = clamp(nextX, minX, mid);
   } else {
-    nextX = clamp(nextX, mid + toWorld(WALL), maxX);
+    nextX = clamp(nextX, mid, maxX);
   }
   nextY = clamp(nextY, minY, maxY);
+  if (nextY > goalTop && nextY < goalBottom) {
+    if (side === "left") {
+      nextX = Math.max(nextX, minX + goalGuard);
+    } else {
+      nextX = Math.min(nextX, maxX - goalGuard);
+    }
+  }
 
   body.setNextKinematicTranslation(new RAPIER.Vector2(nextX, nextY));
 };
@@ -214,6 +225,9 @@ const applyPaddleTarget = (body, target, side, dt) => {
   const minX = toWorld(WALL);
   const maxX = toWorld(ARENA.width - WALL);
   const mid = toWorld(ARENA.width / 2);
+  const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
+  const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
+  const goalGuard = toWorld(PADDLE_RADIUS);
   const maxDist = Math.max(0.0001, mid - toWorld(WALL) - minX);
 
   const current = body.translation();
@@ -221,11 +235,18 @@ const applyPaddleTarget = (body, target, side, dt) => {
   let nextY = toWorld(target.y);
 
   if (side === "left") {
-    nextX = clamp(nextX, minX, mid - toWorld(WALL));
+    nextX = clamp(nextX, minX, mid);
   } else {
-    nextX = clamp(nextX, mid + toWorld(WALL), maxX);
+    nextX = clamp(nextX, mid, maxX);
   }
   nextY = clamp(nextY, minY, maxY);
+  if (nextY > goalTop && nextY < goalBottom) {
+    if (side === "left") {
+      nextX = Math.max(nextX, minX + goalGuard);
+    } else {
+      nextX = Math.min(nextX, maxX - goalGuard);
+    }
+  }
 
   const dx = nextX - current.x;
   const dy = nextY - current.y;
