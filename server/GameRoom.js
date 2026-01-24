@@ -1,4 +1,4 @@
-const { Room } = require("colyseus");
+const { Room } = require("@colyseus/core");
 const { Schema, MapSchema, defineTypes } = require("@colyseus/schema");
 const RAPIER = require("@dimforge/rapier2d-compat");
 const CONFIG = require("../config.json");
