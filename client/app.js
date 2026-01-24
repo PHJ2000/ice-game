@@ -273,18 +273,6 @@ window.Game = window.Game || {};
       renderState.puck = sampled.puck;
     }
 
-    if (side && input.isDragging()) {
-      const pointerPos = input.getPointerPos();
-      const clamped = clampToSide(pointerPos);
-      if (clamped) {
-        if (side === "left") {
-          renderState.left = { ...renderState.left, x: clamped.x, y: clamped.y };
-        } else {
-          renderState.right = { ...renderState.right, x: clamped.x, y: clamped.y };
-        }
-      }
-    }
-
     renderer.draw(renderState, hitFlashUntil);
 
     if (debugText) {
