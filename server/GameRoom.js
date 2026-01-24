@@ -228,7 +228,7 @@ const applyPaddleTarget = (body, target, side) => {
   const dx = nextX - current.x;
   const dy = nextY - current.y;
   const dist = Math.hypot(dx, dy);
-  const maxStep = PADDLE_SPEED * FIXED_DT * 2.2;
+  const maxStep = PADDLE_SPEED * FIXED_DT * 1.0;
   if (dist > maxStep) {
     const scale = maxStep / dist;
     nextX = current.x + dx * scale;
