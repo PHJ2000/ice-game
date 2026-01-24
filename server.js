@@ -59,7 +59,7 @@ const GOAL_HEIGHT = 140;
 const SCALE = 0.01; // 1px = 0.01m
 const TICK_RATE = 60;
 const FIXED_DT = 1 / TICK_RATE;
-const SUB_STEPS = 2;
+const SUB_STEPS = 3;
 
 const PADDLE_SPEED_PX_PER_FRAME = 6.4;
 const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
@@ -271,7 +271,7 @@ const stepRoom = (room) => {
   applyPaddleVelocity(rightPaddle, room.inputs.right);
 
   for (let i = 0; i < SUB_STEPS; i += 1) {
-    world.step(FIXED_DT / SUB_STEPS, 10, 8);
+    world.step(FIXED_DT / SUB_STEPS, 12, 8);
   }
 
   clampPaddlePosition(leftPaddle, "left");

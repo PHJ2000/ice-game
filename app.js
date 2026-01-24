@@ -15,7 +15,7 @@ const debugText = document.getElementById("debugText");
 
 // 입력/상수
 const inputState = { up: false, down: false, left: false, right: false };
-const BASE_BUFFER_MS = 80;
+const BASE_BUFFER_MS = 120;
 const ARENA = { width: 900, height: 520 };
 const BOUNDS = {
   minX: 40,
