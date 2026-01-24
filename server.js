@@ -123,7 +123,7 @@ const buildWalls = (world) => {
     collider.setRestitution(0.98);
     collider.setFriction(0);
     collider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
-    collider.setUserData({ type: "wall" });
+    collider.userData = { type: "wall" };
   };
 
   createWall(new RAPIER.Vector2(minX, minY), new RAPIER.Vector2(maxX, minY));
@@ -148,7 +148,7 @@ const createPhysicsWorld = () => {
   leftCollider.setRestitution(0.6);
   leftCollider.setFriction(0);
   leftCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
-  leftCollider.setUserData({ type: "paddle" });
+  leftCollider.userData = { type: "paddle" };
 
   const rightBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(toWorld(760), toWorld(260))
@@ -157,7 +157,7 @@ const createPhysicsWorld = () => {
   rightCollider.setRestitution(0.6);
   rightCollider.setFriction(0);
   rightCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
-  rightCollider.setUserData({ type: "paddle" });
+  rightCollider.userData = { type: "paddle" };
 
   const puckBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.dynamic().setTranslation(toWorld(450), toWorld(260)).setCcdEnabled(true)
@@ -166,7 +166,7 @@ const createPhysicsWorld = () => {
   puckCollider.setRestitution(0.95);
   puckCollider.setFriction(0);
   puckCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
-  puckCollider.setUserData({ type: "puck" });
+  puckCollider.userData = { type: "puck" };
   puckBody.setLinearDamping(0.01);
 
   return {
