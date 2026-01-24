@@ -67,6 +67,8 @@ let lastLocalUpdateAt = performance.now();
 let frameCounter = 0;
 let fps = 0;
 let fpsLastAt = performance.now();
+let lastPaddleHitAt = 0;
+let lastWallHitAt = 0;
 
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
@@ -352,8 +354,14 @@ const connect = () => {
       statusText.textContent = message.payload.status;
 
       if (message.payload.events) {
-        if (message.payload.events.wall) playWall();
-        if (message.payload.events.paddle) playPaddle();
+        if (message.payload.events.wall) {
+          lastWallHitAt = performance.now();
+          playWall();
+        }
+        if (message.payload.events.paddle) {
+          lastPaddleHitAt = performance.now();
+          playPaddle();
+        }
         if (message.payload.events.goal) playGoal();
       }
     }
@@ -504,11 +512,14 @@ const loop = () => {
     const wsState = socket && socket.readyState === WebSocket.OPEN ? "연결됨" : "미연결";
     const sinceState = lastStateAt ? Math.round(performance.now() - lastStateAt) : "-";
     const sinceGuestInput = lastGuestInputAt ? Math.round(performance.now() - lastGuestInputAt) : "-";
+    const paddleAge = lastPaddleHitAt ? Math.round(performance.now() - lastPaddleHitAt) : "-";
+    const wallAge = lastWallHitAt ? Math.round(performance.now() - lastWallHitAt) : "-";
     debugText.textContent =
       `역할: ${role || "미정"} / WS: ${wsState}\n` +
       `FPS: ${fps} / 핑: ${pingMs ?? "-"}ms\n` +
       `게스트 입력 수신: ${sinceGuestInput}ms 전\n` +
       `상태 수신: ${sinceState}ms 전\n` +
+      `패들 충돌: ${paddleAge}ms 전 / 벽 충돌: ${wallAge}ms 전\n` +
       `스냅샷 버퍼: ${snapshots.length}개 / 지연: ${BASE_BUFFER_MS}ms`;
   }
 
