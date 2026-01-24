@@ -13,6 +13,7 @@ const SCORE_TO_WIN = CONFIG.SCORE_TO_WIN;
 const SCALE = 0.01;
 const TICK_RATE = 60;
 const FIXED_DT = 1 / TICK_RATE;
+const SUBSTEPS = 2;
 const DEBUG_COLLISION = process.env.DEBUG_COLLISION === "1";
 
 const PADDLE_RADIUS = CONFIG.PADDLE_RADIUS;
@@ -179,12 +180,12 @@ const createPhysicsWorld = () => {
   };
 };
 
-const applyPaddleInput = (body, input, side) => {
+const applyPaddleInput = (body, input, side, dt) => {
   const current = body.translation();
   let nextX = current.x;
   let nextY = current.y;
 
-  const step = PADDLE_SPEED * FIXED_DT;
+  const step = PADDLE_SPEED * dt;
   if (input.left) nextX -= step;
   if (input.right) nextX += step;
   if (input.up) nextY -= step;
@@ -206,7 +207,7 @@ const applyPaddleInput = (body, input, side) => {
   body.setNextKinematicTranslation(new RAPIER.Vector2(nextX, nextY));
 };
 
-const applyPaddleTarget = (body, target, side) => {
+const applyPaddleTarget = (body, target, side, dt) => {
   if (!target) return false;
   const minY = toWorld(WALL);
   const maxY = toWorld(ARENA.height - WALL);
@@ -233,7 +234,7 @@ const applyPaddleTarget = (body, target, side) => {
   const falloff = Math.min(1, Math.max(0, distFromGoal / maxDist));
   const weight = Math.max(0.25, 1 - Math.pow(falloff, 2));
   const dragSpeedMultiplier = 0.9;
-  const maxStep = PADDLE_SPEED * FIXED_DT * dragSpeedMultiplier * weight;
+  const maxStep = PADDLE_SPEED * dt * dragSpeedMultiplier * weight;
   if (dist > maxStep) {
     const scale = maxStep / dist;
     nextX = current.x + dx * scale;
@@ -460,55 +461,70 @@ class GameRoom extends Room {
     const { world, eventQueue, leftBody, rightBody, puckBody } = this.physics;
 
     if (state.running) {
-      const leftMoved = applyPaddleTarget(leftBody, this.targets.left, "left");
-      const rightMoved = applyPaddleTarget(rightBody, this.targets.right, "right");
-      if (!leftMoved) {
-        applyPaddleInput(leftBody, this.inputs.left, "left");
-      }
-      if (!rightMoved) {
-        applyPaddleInput(rightBody, this.inputs.right, "right");
-      }
+      const events = { wall: false, paddle: false, goal: false };
+      const subDt = FIXED_DT / SUBSTEPS;
+      let goalScored = false;
 
-      world.step(eventQueue);
-      const events = consumeCollisionEvents(this);
+      for (let i = 0; i < SUBSTEPS; i += 1) {
+        const leftMoved = applyPaddleTarget(leftBody, this.targets.left, "left", subDt);
+        const rightMoved = applyPaddleTarget(rightBody, this.targets.right, "right", subDt);
+        if (!leftMoved) {
+          applyPaddleInput(leftBody, this.inputs.left, "left", subDt);
+        }
+        if (!rightMoved) {
+          applyPaddleInput(rightBody, this.inputs.right, "right", subDt);
+        }
 
-      const puckVel = puckBody.linvel();
-      const speed = Math.hypot(puckVel.x, puckVel.y);
-      if (speed > MAX_PUCK_SPEED) {
-        const scale = MAX_PUCK_SPEED / speed;
-        puckBody.setLinvel(new RAPIER.Vector2(puckVel.x * scale, puckVel.y * scale), true);
-      }
+        world.timestep = subDt;
+        world.step(eventQueue);
+        const stepEvents = consumeCollisionEvents(this);
+        events.wall = events.wall || stepEvents.wall;
+        events.paddle = events.paddle || stepEvents.paddle;
 
-      const puckPos = puckBody.translation();
-  const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
-  const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
-  const minX = toWorld(WALL);
-  const maxX = toWorld(ARENA.width - WALL);
-  const goalDepth = toWorld(Math.min(GOAL_DEPTH, WALL));
+        const puckVel = puckBody.linvel();
+        const speed = Math.hypot(puckVel.x, puckVel.y);
+        if (speed > MAX_PUCK_SPEED) {
+          const scale = MAX_PUCK_SPEED / speed;
+          puckBody.setLinvel(new RAPIER.Vector2(puckVel.x * scale, puckVel.y * scale), true);
+        }
 
-  const leftInGoal =
-    puckPos.y > goalTop &&
-    puckPos.y < goalBottom &&
-    puckPos.x - PUCK_RADIUS >= minX - goalDepth &&
-    puckPos.x + PUCK_RADIUS <= minX;
-  const rightInGoal =
-    puckPos.y > goalTop &&
-    puckPos.y < goalBottom &&
-    puckPos.x - PUCK_RADIUS >= maxX &&
-    puckPos.x + PUCK_RADIUS <= maxX + goalDepth;
+        const puckPos = puckBody.translation();
+        const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
+        const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
+        const minX = toWorld(WALL);
+        const maxX = toWorld(ARENA.width - WALL);
+        const goalDepth = toWorld(Math.min(GOAL_DEPTH, WALL));
 
-  if (leftInGoal) {
-    state.scoreRight += 1;
-    state.status = "플레이어 2 득점!";
-    resetRound(this, 1);
-    events.goal = true;
-  }
+        const leftInGoal =
+          puckPos.y > goalTop &&
+          puckPos.y < goalBottom &&
+          puckPos.x - PUCK_RADIUS >= minX - goalDepth &&
+          puckPos.x + PUCK_RADIUS <= minX;
+        const rightInGoal =
+          puckPos.y > goalTop &&
+          puckPos.y < goalBottom &&
+          puckPos.x - PUCK_RADIUS >= maxX &&
+          puckPos.x + PUCK_RADIUS <= maxX + goalDepth;
 
-  if (rightInGoal) {
-    state.scoreLeft += 1;
-    state.status = "플레이어 1 득점!";
-    resetRound(this, -1);
-        events.goal = true;
+        if (leftInGoal) {
+          state.scoreRight += 1;
+          state.status = "플레이어 2 득점!";
+          resetRound(this, 1);
+          events.goal = true;
+          goalScored = true;
+        }
+
+        if (rightInGoal) {
+          state.scoreLeft += 1;
+          state.status = "플레이어 1 득점!";
+          resetRound(this, -1);
+          events.goal = true;
+          goalScored = true;
+        }
+
+        if (goalScored) {
+          break;
+        }
       }
 
       if (state.scoreLeft >= SCORE_TO_WIN || state.scoreRight >= SCORE_TO_WIN) {
