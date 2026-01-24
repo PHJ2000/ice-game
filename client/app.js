@@ -1,15 +1,7 @@
 window.Game = window.Game || {};
 
 (async () => {
-  const {
-    Config,
-    Utils,
-    Audio,
-    Input,
-    Network,
-    Render,
-    State,
-  } = window.Game;
+  const { Config, Utils, Audio, Input, Network, Render, State } = window.Game;
 
   const canvas = document.getElementById("arena");
   const resetBtn = document.getElementById("resetBtn");
@@ -33,7 +25,6 @@ window.Game = window.Game || {};
     GOAL_HEIGHT,
     SCORE_TO_WIN,
     BASE_BUFFER_MS,
-    PADDLE_SPEED_PX_PER_FRAME,
     INPUT_SEND_INTERVAL_MS,
     INPUT_KEEPALIVE_MS,
     PADDLE_RADIUS,
@@ -65,148 +56,61 @@ window.Game = window.Game || {};
     puck: { x: 450, y: 260, r: PUCK_RADIUS },
   };
 
-  const localPaddle = { x: 140, y: 260, r: PADDLE_RADIUS };
-  const displayPaddle = { x: 140, y: 260, r: PADDLE_RADIUS };
-  let hasLocalPaddle = false;
-  let lastLocalUpdateAt = performance.now();
+  const snapshotBuffer = State.createSnapshotBuffer(20);
 
-  const BOUNDS = {
-    minX: WALL,
-    maxX: ARENA.width - WALL,
-    minY: WALL,
-    maxY: ARENA.height - WALL,
-  };
-
-  let socketRole = null;
-  let socketSide = null;
+  let role = null;
+  let side = null;
   let roomCode = "";
-  let lastStateAt = 0;
-  let lastGuestInputAt = 0;
-  let inputSeq = 0;
-  let lastInputSentAt = performance.now();
-  let pendingInputs = [];
-  const MAX_PENDING_INPUTS = 120;
-  let lastAckSeq = 0;
 
   let pingMs = null;
   let serverOffsetMs = null;
 
+  let lastStateAt = 0;
   let frameCounter = 0;
   let fps = 0;
   let fpsLastAt = performance.now();
   let lastPaddleHitAt = 0;
   let lastWallHitAt = 0;
   let hitFlashUntil = 0;
+  let lastInputSentAt = performance.now();
 
-  const snapshotBuffer = State.createSnapshotBuffer(20);
+  const applyStateSnapshot = (state) => {
+    if (!state) return;
+    const leftPlayer = state.leftId ? state.players.get(state.leftId) : null;
+    const rightPlayer = state.rightId ? state.players.get(state.rightId) : null;
+    if (!leftPlayer || !rightPlayer || !state.puck) return;
 
-  const normalizeStatePayload = (payload) => {
-    if (!payload || typeof payload !== "object") return null;
-
-    if (payload.l && payload.p && payload.rt) {
-      const events = payload.e || [0, 0, 0];
-      const acks = payload.a || [0, 0];
-      return {
-        time: payload.t ?? Date.now(),
-        running: Boolean(payload.r),
-        status: payload.st || "",
-        scores: { left: payload.s?.[0] ?? 0, right: payload.s?.[1] ?? 0 },
-        events: {
-          wall: Boolean(events[0]),
-          paddle: Boolean(events[1]),
-          goal: Boolean(events[2]),
-        },
-        left: { x: payload.l[0], y: payload.l[1], r: payload.l[2] },
-        right: { x: payload.rt[0], y: payload.rt[1], r: payload.rt[2] },
-        puck: {
-          x: payload.p[0],
-          y: payload.p[1],
-          r: payload.p[2],
-          vx: payload.p[3],
-          vy: payload.p[4],
-        },
-        acks: { left: acks[0], right: acks[1] },
-      };
-    }
-
-    return {
-      time: payload.time ?? Date.now(),
-      running: payload.running,
-      status: payload.status,
-      scores: payload.scores,
-      events: payload.events,
-      left: payload.left,
-      right: payload.right,
-      puck: payload.puck,
-      acks: payload.acks || { left: 0, right: 0 },
+    const snapshot = {
+      time: state.time || Date.now(),
+      running: state.running,
+      status: state.status,
+      scores: { left: state.scoreLeft, right: state.scoreRight },
+      left: { x: leftPlayer.x, y: leftPlayer.y, r: leftPlayer.r },
+      right: { x: rightPlayer.x, y: rightPlayer.y, r: rightPlayer.r },
+      puck: {
+        x: state.puck.x,
+        y: state.puck.y,
+        r: state.puck.r,
+        vx: state.puck.vx,
+        vy: state.puck.vy,
+      },
     };
+
+    const clientNow = performance.timeOrigin + performance.now();
+    const offsetSample = clientNow - snapshot.time;
+    serverOffsetMs = serverOffsetMs === null ? offsetSample : Utils.lerp(serverOffsetMs, offsetSample, 0.1);
+
+    snapshotBuffer.push(snapshot);
+    lastStateAt = performance.now();
+
+    scoreLeftEl.textContent = snapshot.scores.left.toString();
+    scoreRightEl.textContent = snapshot.scores.right.toString();
+    statusText.textContent = snapshot.status;
   };
-
-  const pushSnapshot = (payload) => {
-    const normalized = normalizeStatePayload(payload);
-    if (!normalized) return;
-
-    if (Number.isFinite(normalized.time)) {
-      const clientNow = performance.timeOrigin + performance.now();
-      const offsetSample = clientNow - normalized.time;
-      serverOffsetMs =
-        serverOffsetMs === null ? offsetSample : Utils.lerp(serverOffsetMs, offsetSample, 0.1);
-    }
-
-    snapshotBuffer.push(normalized);
-  };
-
-  const reconcileLocalPaddle = (payload) => {
-    if (!socketSide || !payload || !payload.acks) return;
-    const ackSeq = payload.acks[socketSide];
-    if (!Number.isFinite(ackSeq)) return;
-    if (ackSeq <= lastAckSeq) return;
-    lastAckSeq = ackSeq;
-
-    const auth = socketSide === "left" ? payload.left : payload.right;
-    localPaddle.x = auth.x;
-    localPaddle.y = auth.y;
-    localPaddle.r = auth.r;
-
-    const remaining = [];
-    for (const entry of pendingInputs) {
-      if (entry.seq > ackSeq) {
-        const dtScale = Utils.clamp(entry.dtMs / 16.6667, 0.25, 3);
-        const speed = PADDLE_SPEED_PX_PER_FRAME * dtScale;
-        if (entry.state.up) localPaddle.y -= speed;
-        if (entry.state.down) localPaddle.y += speed;
-        if (entry.state.left) localPaddle.x -= speed;
-        if (entry.state.right) localPaddle.x += speed;
-        remaining.push(entry);
-      }
-    }
-    pendingInputs = remaining;
-
-    if (socketSide === "left") {
-      localPaddle.x = Utils.clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - WALL);
-    } else {
-      localPaddle.x = Utils.clamp(localPaddle.x, ARENA.width / 2 + WALL, BOUNDS.maxX);
-    }
-    localPaddle.y = Utils.clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
-    hasLocalPaddle = true;
-    if (!Number.isFinite(displayPaddle.x)) {
-      displayPaddle.x = localPaddle.x;
-      displayPaddle.y = localPaddle.y;
-      displayPaddle.r = localPaddle.r;
-    }
-  };
-
-  let input;
 
   const network = Network.create({
     onStatus: (text) => {
       connectionStatus.textContent = text;
-    },
-    onOpen: () => {
-      if (roomCode) {
-        network.send({ type: "join", room: roomCode });
-      }
-      network.sendPing();
     },
     onPong: (message) => {
       const nowPerf = performance.now();
@@ -216,24 +120,15 @@ window.Game = window.Game || {};
       if (Number.isFinite(message.serverTime)) {
         const clientNow = performance.timeOrigin + nowPerf;
         const offsetSample = clientNow - (message.serverTime + rtt / 2);
-        serverOffsetMs =
-          serverOffsetMs === null ? offsetSample : Utils.lerp(serverOffsetMs, offsetSample, 0.2);
+        serverOffsetMs = serverOffsetMs === null ? offsetSample : Utils.lerp(serverOffsetMs, offsetSample, 0.2);
       }
     },
     onRole: (message) => {
-      socketRole = message.role;
-      socketSide = message.side;
-      inputSeq = 0;
-      pendingInputs = [];
-      lastInputSentAt = performance.now();
-      lastAckSeq = 0;
-      if (input) input.reset();
-      hasLocalPaddle = false;
-      connectionStatus.textContent = `방 ${message.room} - ${socketRole === "host" ? "호스트" : "게스트"}`;
+      role = message.role;
+      side = message.side;
+      connectionStatus.textContent = `방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`;
       statusText.textContent =
-        socketRole === "host"
-          ? "게스트 입장 대기. 스페이스를 눌러 시작!"
-          : "호스트가 시작하면 게임이 시작돼요.";
+        role === "host" ? "게스트 입장 대기. 스페이스를 눌러 시작!" : "호스트가 시작하면 게임이 시작돼요.";
     },
     onFull: () => {
       connectionStatus.textContent = "방이 가득 찼어요";
@@ -247,73 +142,50 @@ window.Game = window.Game || {};
     onHostLeft: () => {
       statusText.textContent = "호스트가 나갔어요. 새 방을 만들어 주세요.";
     },
-    onRoomExpired: () => {
-      statusText.textContent = "방이 만료되어 종료됐어요. 새 방을 만들어 주세요.";
+    onState: (state) => {
+      applyStateSnapshot(state);
     },
-    onState: (payload) => {
-      lastStateAt = performance.now();
-      pushSnapshot(payload);
-      const latest = normalizeStatePayload(payload);
-      if (latest) {
-        reconcileLocalPaddle(latest);
-        scoreLeftEl.textContent = latest.scores.left.toString();
-        scoreRightEl.textContent = latest.scores.right.toString();
-        statusText.textContent = latest.status;
-        if (latest.events) {
-          if (latest.events.wall) {
-            lastWallHitAt = performance.now();
-            Audio.playWall();
-          }
-          if (latest.events.paddle) {
-            lastPaddleHitAt = performance.now();
-            hitFlashUntil = performance.now() + 200;
-            Audio.playPaddle();
-          }
-          if (latest.events.goal) Audio.playGoal();
-        }
+    onEvent: (events) => {
+      if (events.wall) {
+        lastWallHitAt = performance.now();
+        Audio.playWall();
       }
-    },
-    onGuestInput: () => {
-      lastGuestInputAt = performance.now();
+      if (events.paddle) {
+        lastPaddleHitAt = performance.now();
+        hitFlashUntil = performance.now() + 200;
+        Audio.playPaddle();
+      }
+      if (events.goal) {
+        Audio.playGoal();
+      }
     },
   });
 
-  const sendInput = (inputState) => {
-    if (!socketRole || !roomCode) return;
-    const now = performance.now();
-    const dtMs = Math.max(1, now - lastInputSentAt);
-    lastInputSentAt = now;
-    inputSeq += 1;
-    pendingInputs.push({ seq: inputSeq, state: { ...inputState }, dtMs });
-    while (pendingInputs.length > MAX_PENDING_INPUTS) {
-      pendingInputs.shift();
-    }
-    network.send({
-      type: "input",
-      room: roomCode,
-      payload: { input: { ...inputState }, seq: inputSeq, dtMs },
-    });
-  };
-
-  const maybeSendInput = (force = false) => {
-    if (!socketRole || !roomCode) return;
-    const elapsed = performance.now() - lastInputSentAt;
-    if (!force && !input.isDirty() && elapsed < INPUT_KEEPALIVE_MS) return;
-    sendInput(input.getState());
-    input.clearDirty();
-  };
-
-  input = Input.create({
+  const input = Input.create({
     initAudio: Audio.initAudio,
     onToggle: () => {
-      if (socketRole === "host") {
-        network.send({ type: "control", action: "toggle", room: roomCode });
+      if (role === "host") {
+        network.send("control", { action: "toggle" });
       }
     },
     onInput: (force) => {
       maybeSendInput(force);
     },
   });
+
+  const sendInput = () => {
+    if (!network.isJoined()) return;
+    network.send("input", input.getState());
+    lastInputSentAt = performance.now();
+    input.clearDirty();
+  };
+
+  const maybeSendInput = (force = false) => {
+    if (!network.isJoined()) return;
+    const elapsed = performance.now() - lastInputSentAt;
+    if (!force && !input.isDirty() && elapsed < INPUT_KEEPALIVE_MS) return;
+    sendInput();
+  };
 
   const createRoomCode = () => {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -328,11 +200,7 @@ window.Game = window.Game || {};
     }
     roomCode = cleaned;
     roomInput.value = roomCode;
-    if (!network.isOpen()) {
-      network.connect();
-      return;
-    }
-    network.send({ type: "join", room: roomCode });
+    network.join(roomCode);
   };
 
   const copyShareLink = async () => {
@@ -351,9 +219,6 @@ window.Game = window.Game || {};
 
   const loop = () => {
     const perfNow = performance.now();
-    const localDt = Math.min((perfNow - lastLocalUpdateAt) / 16.6667, 3);
-    lastLocalUpdateAt = perfNow;
-
     const nowMs = performance.timeOrigin + perfNow;
     const offset = serverOffsetMs || 0;
     const renderTime = nowMs - offset - BASE_BUFFER_MS;
@@ -372,66 +237,16 @@ window.Game = window.Game || {};
       renderState.puck = sampled.puck;
     }
 
-    if (socketSide && sampled && sampled.running) {
-      if (!hasLocalPaddle) {
-        const base = socketSide === "left" ? sampled.left : sampled.right;
-        localPaddle.x = base.x;
-        localPaddle.y = base.y;
-        localPaddle.r = base.r;
-        displayPaddle.x = base.x;
-        displayPaddle.y = base.y;
-        displayPaddle.r = base.r;
-        hasLocalPaddle = true;
-      }
-
-      const step = PADDLE_SPEED_PX_PER_FRAME * localDt;
-      const inputState = input.getState();
-      if (inputState.up) localPaddle.y -= step;
-      if (inputState.down) localPaddle.y += step;
-      if (inputState.left) localPaddle.x -= step;
-      if (inputState.right) localPaddle.x += step;
-
-      if (socketSide === "left") {
-        localPaddle.x = Utils.clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - WALL);
-      } else {
-        localPaddle.x = Utils.clamp(localPaddle.x, ARENA.width / 2 + WALL, BOUNDS.maxX);
-      }
-      localPaddle.y = Utils.clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
-
-      displayPaddle.x = Utils.lerp(displayPaddle.x, localPaddle.x, 0.35);
-      displayPaddle.y = Utils.lerp(displayPaddle.y, localPaddle.y, 0.35);
-      displayPaddle.r = localPaddle.r;
-
-      if (socketSide === "left") {
-        renderState.left = { ...renderState.left, x: displayPaddle.x, y: displayPaddle.y };
-      } else {
-        renderState.right = { ...renderState.right, x: displayPaddle.x, y: displayPaddle.y };
-      }
-    }
-
-    if (sampled && !sampled.running && socketSide) {
-      const base = socketSide === "left" ? sampled.left : sampled.right;
-      localPaddle.x = base.x;
-      localPaddle.y = base.y;
-      localPaddle.r = base.r;
-      displayPaddle.x = base.x;
-      displayPaddle.y = base.y;
-      displayPaddle.r = base.r;
-      hasLocalPaddle = true;
-    }
-
     renderer.draw(renderState, hitFlashUntil);
 
     if (debugText) {
-      const wsState = network.isOpen() ? "연결됨" : "미연결";
+      const wsState = network.isJoined() ? "연결됨" : "미연결";
       const sinceState = lastStateAt ? Math.round(performance.now() - lastStateAt) : "-";
-      const sinceGuestInput = lastGuestInputAt ? Math.round(performance.now() - lastGuestInputAt) : "-";
       const paddleAge = lastPaddleHitAt ? Math.round(performance.now() - lastPaddleHitAt) : "-";
       const wallAge = lastWallHitAt ? Math.round(performance.now() - lastWallHitAt) : "-";
       debugText.textContent =
-        `역할: ${socketRole || "없음"} / WS: ${wsState}\n` +
+        `역할: ${role || "없음"} / WS: ${wsState}\n` +
         `FPS: ${fps} / 핑: ${pingMs ?? "-"}ms\n` +
-        `게스트 입력 지연: ${sinceGuestInput}ms 전\n` +
         `상태 수신: ${sinceState}ms 전\n` +
         `패들 충돌: ${paddleAge}ms 전 / 벽 충돌: ${wallAge}ms 전\n` +
         `스냅샷 버퍼: ${snapshotBuffer.size()}개 / 지연: ${BASE_BUFFER_MS}ms`;
@@ -440,7 +255,7 @@ window.Game = window.Game || {};
     requestAnimationFrame(loop);
   };
 
-  resetBtn.addEventListener("click", () => network.send({ type: "control", action: "reset", room: roomCode }));
+  resetBtn.addEventListener("click", () => network.send("control", { action: "reset" }));
   createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
   joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
   copyLinkBtn.addEventListener("click", copyShareLink);
@@ -455,8 +270,6 @@ window.Game = window.Game || {};
   if (roomParam) {
     roomInput.value = roomParam.toUpperCase();
     joinRoom(roomParam);
-  } else {
-    network.connect();
   }
 
   requestAnimationFrame(loop);

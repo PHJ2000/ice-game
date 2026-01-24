@@ -1,6 +1,6 @@
 const http = require("http");
 const { spawn } = require("child_process");
-const WebSocket = require("ws");
+const { Client } = require("colyseus.js");
 
 const port = Number(process.env.TEST_PORT || 3100);
 const serverProcess = spawn(process.execPath, ["server.js"], {
@@ -32,34 +32,23 @@ const waitForHealth = (retries = 40) =>
     attempt();
   });
 
-const waitForPong = () =>
-  new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://localhost:${port}/ws`);
-    const timer = setTimeout(() => {
-      ws.close();
-      reject(new Error("WebSocket pong timeout"));
-    }, 2000);
+const waitForPong = async () => {
+  const client = new Client(`ws://localhost:${port}`);
+  const roomCode = "TEST";
+  const room = await client.joinOrCreate("air_hockey", { roomCode });
+  room.onMessage("role", () => {});
 
-    ws.on("open", () => {
-      ws.send(JSON.stringify({ type: "ping", at: Date.now() }));
-    });
-    ws.on("message", (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-        if (message.type === "pong") {
-          clearTimeout(timer);
-          ws.close();
-          resolve();
-        }
-      } catch (error) {
-        // ignore parse errors
-      }
-    });
-    ws.on("error", (error) => {
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("Colyseus pong timeout")), 2000);
+    room.onMessage("pong", () => {
       clearTimeout(timer);
-      reject(error);
+      resolve();
     });
+    room.send("ping", { at: Date.now() });
   });
+
+  room.leave();
+};
 
 const shutdown = () =>
   new Promise((resolve) => {

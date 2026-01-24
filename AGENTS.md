@@ -1,9 +1,9 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `server.js`: Node.js HTTP + WebSocket server and game simulation (Rapier physics).
+- `server.js`: Node.js HTTP server + Colyseus game server bootstrap.
+- `server/GameRoom.js`: Colyseus room with Rapier physics and game rules.
 - `client/`: Client-side modules (input, network, render, audio, state).
-- `shared/protocol.js`: WebSocket message schema and validation.
 - `config.json`: Shared gameplay tuning values.
 - `index.html` / `styles.css`: UI layout and styling.
 - `assets/`: Audio and static assets.
