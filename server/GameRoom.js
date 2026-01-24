@@ -228,7 +228,6 @@ const applyPaddleTarget = (body, target, side, dt) => {
   const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
   const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
   const goalGuard = toWorld(PADDLE_RADIUS);
-  const maxDist = Math.max(0.0001, mid - toWorld(WALL) - minX);
 
   const current = body.translation();
   let nextX = toWorld(target.x);
@@ -254,10 +253,7 @@ const applyPaddleTarget = (body, target, side, dt) => {
   if (dist < 0.0001) {
     return true;
   }
-  const distFromGoal = side === "left" ? current.x - minX : maxX - current.x;
-  const ratio = Math.min(1, Math.max(0, distFromGoal / maxDist));
-  const zoneMultiplier = 1.2 - 0.4 * ratio;
-  const maxStep = PADDLE_SPEED * dt * zoneMultiplier;
+  const maxStep = PADDLE_SPEED * dt;
   const step = Math.min(maxStep, dist);
   const scale = step / dist;
   nextX = current.x + dx * scale;
