@@ -57,6 +57,7 @@ const WALL = 40;
 const GOAL_HEIGHT = 140;
 const SCALE = 0.01; // px -> m
 const FIXED_DT = 1 / 60;
+const SUB_STEPS = 2;
 const PADDLE_SPEED_PX = 6.4;
 const PADDLE_SPEED = PADDLE_SPEED_PX * SCALE * 60;
 
@@ -253,7 +254,9 @@ const stepRoom = (room) => {
   applyPaddleVelocity(leftPaddle, room.inputs.left);
   applyPaddleVelocity(rightPaddle, room.inputs.right);
 
-  world.step(FIXED_DT, 8, 3);
+  for (let i = 0; i < SUB_STEPS; i += 1) {
+    world.step(FIXED_DT / SUB_STEPS, 10, 8);
+  }
 
   clampPaddlePosition(leftPaddle, "left");
   clampPaddlePosition(rightPaddle, "right");
