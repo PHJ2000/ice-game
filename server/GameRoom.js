@@ -230,16 +230,18 @@ const applyPaddleTarget = (body, target, side, dt) => {
   const dx = nextX - current.x;
   const dy = nextY - current.y;
   const dist = Math.hypot(dx, dy);
+  if (dist < 0.0001) {
+    return true;
+  }
   const distFromGoal = side === "left" ? current.x - minX : maxX - current.x;
   const falloff = Math.min(1, Math.max(0, distFromGoal / maxDist));
   const weight = Math.max(0.25, 1 - Math.pow(falloff, 2));
-  const dragSpeedMultiplier = 0.9;
+  const dragSpeedMultiplier = 1.0;
   const maxStep = PADDLE_SPEED * dt * dragSpeedMultiplier * weight;
-  if (dist > maxStep) {
-    const scale = maxStep / dist;
-    nextX = current.x + dx * scale;
-    nextY = current.y + dy * scale;
-  }
+  const step = Math.min(maxStep, dist);
+  const scale = step / dist;
+  nextX = current.x + dx * scale;
+  nextY = current.y + dy * scale;
 
   body.setNextKinematicTranslation(new RAPIER.Vector2(nextX, nextY));
   return true;
