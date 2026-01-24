@@ -297,7 +297,7 @@ const resetRound = (room, direction) => {
   rightBody.setTranslation(new RAPIER.Vector2(toWorld(760), toWorld(260)), true);
 
   puckBody.setTranslation(new RAPIER.Vector2(toWorld(450), toWorld(260)), true);
-  const vyPxPerSec = (Math.random() * 2.8 + 2.2) * TICK_RATE * (Math.random() > 0.5 ? 1 : -1);
+  const vyPxPerSec = (Math.random() * 2.8 + 2.2) * RUNNING_TICK_RATE * (Math.random() > 0.5 ? 1 : -1);
   puckBody.setLinvel(new RAPIER.Vector2(PUCK_INITIAL_VX * direction, vyPxPerSec * SCALE), true);
 };
 
