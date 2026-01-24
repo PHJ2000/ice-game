@@ -164,6 +164,10 @@ window.Game = window.Game || {};
 
   const input = Input.create({
     initAudio: Audio.initAudio,
+    canvas,
+    getSide: () => side,
+    getPaddlePosition: (which) => (which === "left" ? renderState.left : renderState.right),
+    getPaddleRadius: () => PADDLE_RADIUS,
     onToggle: () => {
       if (role === "host") {
         network.send("control", { action: "toggle" });

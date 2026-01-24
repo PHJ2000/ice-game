@@ -1,15 +1,90 @@
 window.Game = window.Game || {};
 
 window.Game.Input = (() => {
-  const create = ({ onToggle, onInput, initAudio }) => {
+  const create = ({ onToggle, onInput, initAudio, canvas, getPaddlePosition, getSide, getPaddleRadius }) => {
     const state = { up: false, down: false, left: false, right: false };
     let dirty = false;
+    let dragging = false;
+    let activePointerId = null;
 
     const setState = (key, value) => {
       if (state[key] !== value) {
         state[key] = value;
         dirty = true;
       }
+    };
+
+    const resetState = () => {
+      state.up = false;
+      state.down = false;
+      state.left = false;
+      state.right = false;
+      dirty = false;
+    };
+
+    const getCanvasPosition = (event) => {
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return {
+        x: (event.clientX - rect.left) * scaleX,
+        y: (event.clientY - rect.top) * scaleY,
+      };
+    };
+
+    const applyPointerInput = (pos) => {
+      const side = getSide ? getSide() : null;
+      if (!side) return;
+      const paddle = getPaddlePosition ? getPaddlePosition(side) : null;
+      if (!paddle) return;
+      const dx = pos.x - paddle.x;
+      const dy = pos.y - paddle.y;
+      const deadZone = 6;
+      setState("left", dx < -deadZone);
+      setState("right", dx > deadZone);
+      setState("up", dy < -deadZone);
+      setState("down", dy > deadZone);
+    };
+
+    const handlePointerDown = (event) => {
+      initAudio();
+      if (!canvas) return;
+      const side = getSide ? getSide() : null;
+      if (!side) return;
+      const paddle = getPaddlePosition ? getPaddlePosition(side) : null;
+      if (!paddle) return;
+      const pos = getCanvasPosition(event);
+      if (!pos) return;
+      const radius = getPaddleRadius ? getPaddleRadius() : 0;
+      const dx = pos.x - paddle.x;
+      const dy = pos.y - paddle.y;
+      const withinPaddle = Math.hypot(dx, dy) <= radius + 10;
+      if (!withinPaddle) return;
+
+      dragging = true;
+      activePointerId = event.pointerId;
+      canvas.setPointerCapture(activePointerId);
+      applyPointerInput(pos);
+      onInput(true);
+      event.preventDefault();
+    };
+
+    const handlePointerMove = (event) => {
+      if (!dragging || event.pointerId !== activePointerId) return;
+      const pos = getCanvasPosition(event);
+      if (!pos) return;
+      applyPointerInput(pos);
+      onInput(true);
+    };
+
+    const handlePointerUp = (event) => {
+      if (!dragging || event.pointerId !== activePointerId) return;
+      dragging = false;
+      activePointerId = null;
+      resetState();
+      onInput(true);
+      event.preventDefault();
     };
 
     const handleKeyDown = (event) => {
@@ -42,15 +117,19 @@ window.Game.Input = (() => {
     };
 
     const reset = () => {
-      state.up = false;
-      state.down = false;
-      state.left = false;
-      state.right = false;
-      dirty = false;
+      dragging = false;
+      activePointerId = null;
+      resetState();
     };
 
     document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("keyup", handleKeyUp);
+    if (canvas) {
+      canvas.addEventListener("pointerdown", handlePointerDown);
+      canvas.addEventListener("pointermove", handlePointerMove);
+      canvas.addEventListener("pointerup", handlePointerUp);
+      canvas.addEventListener("pointercancel", handlePointerUp);
+    }
 
     return {
       getState: () => ({ ...state }),
