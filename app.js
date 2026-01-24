@@ -1,4 +1,4 @@
-// ĵ����/DOM ���
+// 캔버스/DOM 연결
 const canvas = document.getElementById("arena");
 const ctx = canvas.getContext("2d");
 const resetBtn = document.getElementById("resetBtn");
@@ -13,7 +13,7 @@ const copyLinkBtn = document.getElementById("copyLinkBtn");
 const connectionStatus = document.getElementById("connectionStatus");
 const debugText = document.getElementById("debugText");
 
-// �Է�/���
+// 입력/상수
 const inputState = { up: false, down: false, left: false, right: false };
 const BASE_BUFFER_MS = 140;
 const ARENA = { width: 900, height: 520 };
@@ -25,14 +25,14 @@ const BOUNDS = {
 };
 const PADDLE_SPEED = 6.4;
 
-// ���� ����
+// 렌더 상태
 const renderState = {
   left: { x: 140, y: 260, r: 26 },
   right: { x: 760, y: 260, r: 26 },
   puck: { x: 450, y: 260, r: 16 },
 };
 
-// ��Ʈ��ũ/����ȭ
+// 네트워크/동기화
 let socket;
 let role = null;
 let side = null;
@@ -45,20 +45,20 @@ let pendingInputs = [];
 const MAX_PENDING_INPUTS = 120;
 let lastAckSeq = 0;
 
-// �����
+// 사운드
 let audioReady = false;
 let audioContext;
 let masterGain;
 let bgm;
 
-// ��
+// 핑
 let pingMs = null;
 
-// ������ ����
+// 상태 스냅샷
 const snapshots = [];
 const MAX_SNAPSHOTS = 20;
 
-// Ŭ���̾�Ʈ ���� ����
+// 클라이언트 예측 패들
 const localPaddle = { x: 140, y: 260, r: 26 };
 let hasLocalPaddle = false;
 let lastLocalUpdateAt = performance.now();
@@ -71,13 +71,13 @@ let lastPaddleHitAt = 0;
 let lastWallHitAt = 0;
 let hitFlashUntil = 0;
 
-// ��ƿ
+// 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
 
-// ���� ������ �е鸸 ����ϰ�, ���� ���� ���� ���·� �׸���.
+// 입력은 로컬 패들만 즉시 반영하고, 나머지는 서버 상태로 그린다.
 
-// �е� �Է��� ���� ƽ ������ ����
+// 패들 입력을 로컬 예측으로 적용
 const applyInputLocal = (paddle, input, dtScale) => {
   const speed = PADDLE_SPEED * dtScale;
   if (input.up) paddle.y -= speed;
@@ -86,7 +86,7 @@ const applyInputLocal = (paddle, input, dtScale) => {
   if (input.right) paddle.x += speed;
 };
 
-// ����� �ʱ�ȭ/ȿ����
+// 사운드 초기화/재생
 const initAudio = () => {
   if (!audioContext) {
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -125,21 +125,21 @@ const playWall = () => playTone(360, 0.08, 0.12);
 const playPaddle = () => playTone(520, 0.09, 0.18);
 const playGoal = () => playTone(220, 0.22, 0.3);
 
-// �޽��� ����
+// 메시지 전송
 const sendMessage = (data) => {
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify(data));
   }
 };
 
-// �� ����(�պ� ����)
+// 핑 전송(지연 측정)
 const sendPing = () => {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   const sentAt = performance.now();
   sendMessage({ type: "ping", at: sentAt });
 };
 
-// �Խ�Ʈ �Է� ����
+// 게스트 입력 전송
 const sendInput = () => {
   if (!role || !roomCode) return;
   const now = performance.now();
@@ -157,7 +157,7 @@ const sendInput = () => {
   });
 };
 
-// ������ ����
+// 스냅샷 저장
 const pushSnapshot = (payload) => {
   snapshots.push({ time: performance.now(), state: payload });
   while (snapshots.length > MAX_SNAPSHOTS) {
@@ -165,7 +165,7 @@ const pushSnapshot = (payload) => {
   }
 };
 
-// ������ ���� ����
+// 스냅샷에서 보간
 const sampleState = (renderTime) => {
   if (snapshots.length === 0) return null;
   if (snapshots.length === 1) return snapshots[0].state;
@@ -211,7 +211,7 @@ const sampleState = (renderTime) => {
   };
 };
 
-// ���� ack ��� �����Ǹ����̼�
+// 입력 ack 이후 로컬 보정
 const reconcileLocalPaddle = (payload) => {
   if (!side || !payload || !payload.acks) return;
   const ackSeq = payload.acks[side];
@@ -243,7 +243,7 @@ const reconcileLocalPaddle = (payload) => {
   hasLocalPaddle = true;
 };
 
-// ������
+// 그리기
 const draw = () => {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -294,19 +294,19 @@ const draw = () => {
   ctx.fillRect(canvas.width - 40, goalTop, 20, goalHeight);
 };
 
-// ���� ���� ǥ��
+// 연결 상태 표시
 const setConnectionStatus = (text) => {
   connectionStatus.textContent = text;
 };
 
-// WebSocket ����
+// WebSocket 연결
 const connect = () => {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  setConnectionStatus("���� ��...");
+  setConnectionStatus("연결 중...");
   socket = new WebSocket(`${protocol}://${window.location.host}/ws`);
 
   socket.addEventListener("open", () => {
-    setConnectionStatus("�����");
+    setConnectionStatus("연결됨");
     if (roomCode) {
       sendMessage({ type: "join", room: roomCode });
     }
@@ -329,29 +329,29 @@ const connect = () => {
       lastInputSentAt = performance.now();
       lastAckSeq = 0;
       hasLocalPaddle = false;
-      setConnectionStatus(`�� ${message.room} - ${role === "host" ? "ȣ��Ʈ" : "�Խ�Ʈ"}`);
+      setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
       statusText.textContent =
-        role === "host" ? "�Խ�Ʈ ��� ��. �����̽��� ����!" : "ȣ��Ʈ�� �����ϸ� ���� ����.";
+        role === "host" ? "게스트 입장 대기. 스페이스를 눌러 시작!" : "호스트가 시작하면 게임이 시작돼요.";
       return;
     }
 
     if (message.type === "full") {
-      setConnectionStatus("���� ���� á���");
+      setConnectionStatus("방이 가득 찼어요");
       return;
     }
 
     if (message.type === "guest-joined") {
-      statusText.textContent = "�Խ�Ʈ ����! �����̽��� ����!";
+      statusText.textContent = "게스트 입장! 스페이스를 눌러 시작!";
       return;
     }
 
     if (message.type === "guest-left") {
-      statusText.textContent = "�Խ�Ʈ�� �������.";
+      statusText.textContent = "게스트가 나갔어요.";
       return;
     }
 
     if (message.type === "host-left") {
-      statusText.textContent = "ȣ��Ʈ�� �������. �� ���� ������ּ���.";
+      statusText.textContent = "호스트가 나갔어요. 새 방을 만들어 주세요.";
       return;
     }
 
@@ -383,15 +383,15 @@ const connect = () => {
   });
 
   socket.addEventListener("close", () => {
-    setConnectionStatus("���� ����");
+    setConnectionStatus("연결 종료");
   });
 
   socket.addEventListener("error", () => {
-    setConnectionStatus("���� ����");
+    setConnectionStatus("연결 오류");
   });
 };
 
-// �� �ڵ� ����/����
+// 방 코드 생성/참가
 const createRoomCode = () => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   return Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
@@ -400,7 +400,7 @@ const createRoomCode = () => {
 const joinRoom = (code) => {
   const cleaned = code.trim().toUpperCase();
   if (!/^[A-Z0-9]{4,6}$/.test(cleaned)) {
-    statusText.textContent = "�� �ڵ�� 4~6�ڸ� ����/���ڸ� �����ؿ�.";
+    statusText.textContent = "방 코드는 4~6자리 영문/숫자만 입력해요.";
     return;
   }
   roomCode = cleaned;
@@ -414,22 +414,22 @@ const joinRoom = (code) => {
   }
 };
 
-// ��ũ ����
+// 링크 복사
 const copyShareLink = async () => {
   if (!roomCode) {
-    statusText.textContent = "���� ���� ������ּ���.";
+    statusText.textContent = "먼저 방을 만들어 주세요.";
     return;
   }
   const url = `${window.location.origin}?room=${roomCode}`;
   try {
     await navigator.clipboard.writeText(url);
-    statusText.textContent = "��ũ�� �����߾��!";
+    statusText.textContent = "링크를 복사했어요!";
   } catch (error) {
-    statusText.textContent = "���� ����. �ּ�â ��ũ�� ���� �������ּ���.";
+    statusText.textContent = "복사 실패. 주소창 링크를 직접 복사해 주세요.";
   }
 };
 
-// Ű �Է� ó��
+// 키 입력 처리
 document.addEventListener("keydown", (event) => {
   initAudio();
   const key = event.key.toLowerCase();
@@ -458,7 +458,7 @@ document.addEventListener("keyup", (event) => {
   sendInput();
 });
 
-// ���� ����
+// 메인 루프
 const loop = () => {
   const perfNow = performance.now();
   const localDt = Math.min((perfNow - lastLocalUpdateAt) / 16.6667, 3);
@@ -479,7 +479,7 @@ const loop = () => {
     renderState.puck = sampled.puck;
   }
 
-  // ���� �е� ����: �� �Է��� ��� �ݿ��� �������� Ȯ��
+  // 로컬 패들 반영: 내 입력을 즉시 보여준다
   if (side && sampled && sampled.running) {
     if (!hasLocalPaddle) {
       const base = side === "left" ? sampled.left : sampled.right;
@@ -520,18 +520,18 @@ const loop = () => {
   draw();
 
   if (debugText) {
-    const wsState = socket && socket.readyState === WebSocket.OPEN ? "�����" : "�̿���";
+    const wsState = socket && socket.readyState === WebSocket.OPEN ? "연결됨" : "미연결";
     const sinceState = lastStateAt ? Math.round(performance.now() - lastStateAt) : "-";
     const sinceGuestInput = lastGuestInputAt ? Math.round(performance.now() - lastGuestInputAt) : "-";
     const paddleAge = lastPaddleHitAt ? Math.round(performance.now() - lastPaddleHitAt) : "-";
     const wallAge = lastWallHitAt ? Math.round(performance.now() - lastWallHitAt) : "-";
     debugText.textContent =
-      `����: ${role || "����"} / WS: ${wsState}\n` +
-      `FPS: ${fps} / ��: ${pingMs ?? "-"}ms\n` +
-      `�Խ�Ʈ �Է� ����: ${sinceGuestInput}ms ��\n` +
-      `���� ����: ${sinceState}ms ��\n` +
-      `�е� �浹: ${paddleAge}ms �� / �� �浹: ${wallAge}ms ��\n` +
-      `������ ����: ${snapshots.length}�� / ����: ${BASE_BUFFER_MS}ms`;
+      `역할: ${role || "없음"} / WS: ${wsState}\n` +
+      `FPS: ${fps} / 핑: ${pingMs ?? "-"}ms\n` +
+      `게스트 입력 지연: ${sinceGuestInput}ms 전\n` +
+      `상태 수신: ${sinceState}ms 전\n` +
+      `패들 충돌: ${paddleAge}ms 전 / 벽 충돌: ${wallAge}ms 전\n` +
+      `스냅샷 버퍼: ${snapshots.length}개 / 지연: ${BASE_BUFFER_MS}ms`;
   }
 
   requestAnimationFrame(loop);
