@@ -12,24 +12,42 @@ const joinBtn = document.getElementById("joinBtn");
 const copyLinkBtn = document.getElementById("copyLinkBtn");
 const connectionStatus = document.getElementById("connectionStatus");
 const debugText = document.getElementById("debugText");
+const rulesText = document.getElementById("rulesText");
 
 // 입력/상수
 const inputState = { up: false, down: false, left: false, right: false };
-const BASE_BUFFER_MS = 140;
-const ARENA = { width: 900, height: 520 };
-const BOUNDS = {
-  minX: 40,
-  maxX: ARENA.width - 40,
-  minY: 40,
-  maxY: ARENA.height - 40,
+const CONFIG = window.GAME_CONFIG || {
+  ARENA: { width: 900, height: 520 },
+  WALL: 40,
+  GOAL_HEIGHT: 140,
+  SCORE_TO_WIN: 7,
+  BASE_BUFFER_MS: 140,
+  PADDLE_RADIUS: 26,
+  PUCK_RADIUS: 16,
+  PADDLE_SPEED_PX_PER_FRAME: 6.8,
+  INPUT_SEND_INTERVAL_MS: 50,
+  INPUT_KEEPALIVE_MS: 120,
 };
-const PADDLE_SPEED = 6.4;
+const ARENA = CONFIG.ARENA;
+const WALL = CONFIG.WALL;
+const GOAL_HEIGHT = CONFIG.GOAL_HEIGHT;
+const SCORE_TO_WIN = CONFIG.SCORE_TO_WIN;
+const BASE_BUFFER_MS = CONFIG.BASE_BUFFER_MS;
+const PADDLE_SPEED = CONFIG.PADDLE_SPEED_PX_PER_FRAME;
+const INPUT_SEND_INTERVAL_MS = CONFIG.INPUT_SEND_INTERVAL_MS;
+const INPUT_KEEPALIVE_MS = CONFIG.INPUT_KEEPALIVE_MS;
+const BOUNDS = {
+  minX: WALL,
+  maxX: ARENA.width - WALL,
+  minY: WALL,
+  maxY: ARENA.height - WALL,
+};
 
 // 렌더 상태
 const renderState = {
-  left: { x: 140, y: 260, r: 26 },
-  right: { x: 760, y: 260, r: 26 },
-  puck: { x: 450, y: 260, r: 16 },
+  left: { x: 140, y: 260, r: CONFIG.PADDLE_RADIUS },
+  right: { x: 760, y: 260, r: CONFIG.PADDLE_RADIUS },
+  puck: { x: 450, y: 260, r: CONFIG.PUCK_RADIUS },
 };
 
 // 네트워크/동기화
@@ -44,6 +62,7 @@ let lastInputSentAt = performance.now();
 let pendingInputs = [];
 const MAX_PENDING_INPUTS = 120;
 let lastAckSeq = 0;
+let inputDirty = false;
 
 // 사운드
 let audioReady = false;
@@ -59,7 +78,7 @@ const snapshots = [];
 const MAX_SNAPSHOTS = 20;
 
 // 클라이언트 예측 패들
-const localPaddle = { x: 140, y: 260, r: 26 };
+const localPaddle = { x: 140, y: 260, r: CONFIG.PADDLE_RADIUS };
 let hasLocalPaddle = false;
 let lastLocalUpdateAt = performance.now();
 
@@ -74,6 +93,16 @@ let hitFlashUntil = 0;
 // 유틸
 const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 const lerp = (start, end, t) => start + (end - start) * t;
+const setInputFlag = (key, value) => {
+  if (inputState[key] !== value) {
+    inputState[key] = value;
+    inputDirty = true;
+  }
+};
+
+if (rulesText) {
+  rulesText.textContent = `왼쪽 플레이어: WASD · 오른쪽 플레이어: WASD · 목표 점수 ${SCORE_TO_WIN}점`;
+}
 
 // 입력은 로컬 패들만 즉시 반영하고, 나머지는 서버 상태로 그린다.
 
@@ -157,6 +186,14 @@ const sendInput = () => {
   });
 };
 
+const maybeSendInput = (force = false) => {
+  if (!role || !roomCode) return;
+  const elapsed = performance.now() - lastInputSentAt;
+  if (!force && !inputDirty && elapsed < INPUT_KEEPALIVE_MS) return;
+  sendInput();
+  inputDirty = false;
+};
+
 // 스냅샷 저장
 const pushSnapshot = (payload) => {
   snapshots.push({ time: performance.now(), state: payload });
@@ -235,9 +272,9 @@ const reconcileLocalPaddle = (payload) => {
   pendingInputs = remaining;
 
   if (side === "left") {
-    localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - 40);
+    localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - WALL);
   } else {
-    localPaddle.x = clamp(localPaddle.x, ARENA.width / 2 + 40, BOUNDS.maxX);
+    localPaddle.x = clamp(localPaddle.x, ARENA.width / 2 + WALL, BOUNDS.maxX);
   }
   localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
   hasLocalPaddle = true;
@@ -249,12 +286,12 @@ const draw = () => {
 
   ctx.strokeStyle = "#9ecdf1";
   ctx.lineWidth = 4;
-  ctx.strokeRect(30, 30, canvas.width - 60, canvas.height - 60);
+  ctx.strokeRect(WALL, WALL, canvas.width - WALL * 2, canvas.height - WALL * 2);
 
   ctx.beginPath();
   ctx.setLineDash([12, 12]);
-  ctx.moveTo(canvas.width / 2, 40);
-  ctx.lineTo(canvas.width / 2, canvas.height - 40);
+  ctx.moveTo(canvas.width / 2, WALL);
+  ctx.lineTo(canvas.width / 2, canvas.height - WALL);
   ctx.stroke();
   ctx.setLineDash([]);
 
@@ -286,12 +323,14 @@ const draw = () => {
     ctx.lineWidth = 4;
   }
 
-  const goalHeight = 140;
+  const goalHeight = GOAL_HEIGHT;
   const goalTop = canvas.height / 2 - goalHeight / 2;
+  const goalWidth = WALL / 2;
+  const goalInset = WALL / 2;
   ctx.fillStyle = "rgba(255, 123, 47, 0.15)";
-  ctx.fillRect(20, goalTop, 20, goalHeight);
+  ctx.fillRect(goalInset, goalTop, goalWidth, goalHeight);
   ctx.fillStyle = "rgba(38, 62, 89, 0.15)";
-  ctx.fillRect(canvas.width - 40, goalTop, 20, goalHeight);
+  ctx.fillRect(canvas.width - WALL, goalTop, goalWidth, goalHeight);
 };
 
 // 연결 상태 표시
@@ -328,6 +367,11 @@ const connect = () => {
       pendingInputs = [];
       lastInputSentAt = performance.now();
       lastAckSeq = 0;
+      inputDirty = false;
+      inputState.up = false;
+      inputState.down = false;
+      inputState.left = false;
+      inputState.right = false;
       hasLocalPaddle = false;
       setConnectionStatus(`방 ${message.room} - ${role === "host" ? "호스트" : "게스트"}`);
       statusText.textContent =
@@ -433,6 +477,9 @@ const copyShareLink = async () => {
 document.addEventListener("keydown", (event) => {
   initAudio();
   const key = event.key.toLowerCase();
+  if (event.repeat && ["w", "a", "s", "d"].includes(key)) {
+    return;
+  }
   if (["w", "a", "s", "d", " "].includes(key)) {
     event.preventDefault();
   }
@@ -442,20 +489,20 @@ document.addEventListener("keydown", (event) => {
     }
     return;
   }
-  if (key === "w") inputState.up = true;
-  if (key === "s") inputState.down = true;
-  if (key === "a") inputState.left = true;
-  if (key === "d") inputState.right = true;
-  sendInput();
+  if (key === "w") setInputFlag("up", true);
+  if (key === "s") setInputFlag("down", true);
+  if (key === "a") setInputFlag("left", true);
+  if (key === "d") setInputFlag("right", true);
+  maybeSendInput(true);
 });
 
 document.addEventListener("keyup", (event) => {
   const key = event.key.toLowerCase();
-  if (key === "w") inputState.up = false;
-  if (key === "s") inputState.down = false;
-  if (key === "a") inputState.left = false;
-  if (key === "d") inputState.right = false;
-  sendInput();
+  if (key === "w") setInputFlag("up", false);
+  if (key === "s") setInputFlag("down", false);
+  if (key === "a") setInputFlag("left", false);
+  if (key === "d") setInputFlag("right", false);
+  maybeSendInput(true);
 });
 
 // 메인 루프
@@ -496,9 +543,9 @@ const loop = () => {
     if (inputState.right) localPaddle.x += step;
 
     if (side === "left") {
-      localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - 40);
+      localPaddle.x = clamp(localPaddle.x, BOUNDS.minX, ARENA.width / 2 - WALL);
     } else {
-      localPaddle.x = clamp(localPaddle.x, ARENA.width / 2 + 40, BOUNDS.maxX);
+      localPaddle.x = clamp(localPaddle.x, ARENA.width / 2 + WALL, BOUNDS.maxX);
     }
     localPaddle.y = clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
 
@@ -544,7 +591,7 @@ copyLinkBtn.addEventListener("click", copyShareLink);
 canvas.addEventListener("click", initAudio);
 document.addEventListener("pointerdown", initAudio);
 
-setInterval(sendInput, 16);
+setInterval(maybeSendInput, INPUT_SEND_INTERVAL_MS);
 setInterval(sendPing, 1000);
 
 const params = new URLSearchParams(window.location.search);

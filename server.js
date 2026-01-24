@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const RAPIER = require("@dimforge/rapier2d-compat");
 const { WebSocketServer } = require("ws");
+const CONFIG = require("./config");
 
 const port = process.env.PORT || 3000;
 const baseDir = __dirname;
@@ -53,29 +54,33 @@ const rooms = new Map();
 let nextId = 1;
 
 // 경기/물리 상수
-const ARENA = { width: 900, height: 520 };
-const WALL = 40;
-const GOAL_HEIGHT = 140;
+const ARENA = CONFIG.ARENA;
+const WALL = CONFIG.WALL;
+const GOAL_HEIGHT = CONFIG.GOAL_HEIGHT;
+const SCORE_TO_WIN = CONFIG.SCORE_TO_WIN;
 const SCALE = 0.01; // 1px = 0.01m
-const TICK_RATE = 60;
+const RUNNING_TICK_RATE = 60;
+const IDLE_TICK_RATE = 10;
+const RUNNING_SNAPSHOT_RATE = 30;
+const IDLE_SNAPSHOT_RATE = 5;
+const TICK_RATE = RUNNING_TICK_RATE;
 const FIXED_DT = 1 / TICK_RATE;
-const SNAPSHOT_RATE = 30;
-const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_RATE;
-const DEBUG_COLLISION = true;
+const DEBUG_COLLISION = process.env.DEBUG_COLLISION === "1";
 
-const PADDLE_SPEED_PX_PER_FRAME = 6.8;
+const PADDLE_RADIUS = CONFIG.PADDLE_RADIUS;
+const PADDLE_SPEED_PX_PER_FRAME = CONFIG.PADDLE_SPEED_PX_PER_FRAME;
 const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
 const PADDLE_SPEED = PADDLE_SPEED_PX_PER_SEC * SCALE;
 
-const PUCK_RADIUS_PX = 16;
+const PUCK_RADIUS_PX = CONFIG.PUCK_RADIUS;
 const PUCK_RADIUS = PUCK_RADIUS_PX * SCALE;
-const PUCK_INITIAL_VX_PX_PER_FRAME = 6.2;
-const PUCK_INITIAL_VY_PX_PER_FRAME = 3.6;
+const PUCK_INITIAL_VX_PX_PER_FRAME = CONFIG.PUCK_INITIAL_VX_PX_PER_FRAME;
+const PUCK_INITIAL_VY_PX_PER_FRAME = CONFIG.PUCK_INITIAL_VY_PX_PER_FRAME;
 const PUCK_INITIAL_VX_PX_PER_SEC = PUCK_INITIAL_VX_PX_PER_FRAME * TICK_RATE;
 const PUCK_INITIAL_VY_PX_PER_SEC = PUCK_INITIAL_VY_PX_PER_FRAME * TICK_RATE;
 const PUCK_INITIAL_VX = PUCK_INITIAL_VX_PX_PER_SEC * SCALE;
 const PUCK_INITIAL_VY = PUCK_INITIAL_VY_PX_PER_SEC * SCALE;
-const MAX_PUCK_SPEED_PX_PER_FRAME = 20;
+const MAX_PUCK_SPEED_PX_PER_FRAME = CONFIG.MAX_PUCK_SPEED_PX_PER_FRAME;
 const MAX_PUCK_SPEED_PX_PER_SEC = MAX_PUCK_SPEED_PX_PER_FRAME * TICK_RATE;
 const MAX_PUCK_SPEED = MAX_PUCK_SPEED_PX_PER_SEC * SCALE;
 
@@ -94,8 +99,8 @@ const broadcast = (room, payload) => {
 
 // 초기 게임 상태
 const createState = () => ({
-  left: { x: 140, y: 260, r: 26 },
-  right: { x: 760, y: 260, r: 26 },
+  left: { x: 140, y: 260, r: PADDLE_RADIUS },
+  right: { x: 760, y: 260, r: PADDLE_RADIUS },
   puck: {
     x: 450,
     y: 260,
@@ -145,7 +150,7 @@ const createPhysicsWorld = () => {
   const leftBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(toWorld(140), toWorld(260))
   );
-  const leftCollider = world.createCollider(RAPIER.ColliderDesc.ball(toWorld(26)), leftBody);
+  const leftCollider = world.createCollider(RAPIER.ColliderDesc.ball(toWorld(PADDLE_RADIUS)), leftBody);
   leftCollider.setRestitution(0.6);
   leftCollider.setFriction(0);
   leftCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
@@ -154,7 +159,7 @@ const createPhysicsWorld = () => {
   const rightBody = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(toWorld(760), toWorld(260))
   );
-  const rightCollider = world.createCollider(RAPIER.ColliderDesc.ball(toWorld(26)), rightBody);
+  const rightCollider = world.createCollider(RAPIER.ColliderDesc.ball(toWorld(PADDLE_RADIUS)), rightBody);
   rightCollider.setRestitution(0.6);
   rightCollider.setFriction(0);
   rightCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
@@ -183,6 +188,8 @@ const createPhysicsWorld = () => {
 const createRoom = () => {
   const physics = createPhysicsWorld();
   const events = { wall: false, paddle: false, goal: false };
+  const tickRate = IDLE_TICK_RATE;
+  const snapshotIntervalMs = 1000 / IDLE_SNAPSHOT_RATE;
 
   return {
     hostId: null,
@@ -197,6 +204,8 @@ const createRoom = () => {
     lastCollisionLogAt: 0,
     eventLatch: { wall: false, paddle: false, goal: false },
     timer: null,
+    tickRate,
+    snapshotIntervalMs,
     physics,
     events,
   };
@@ -345,7 +354,7 @@ const stepRoom = (room) => {
     room.eventLatch.goal = true;
   }
 
-  if (state.scores.left >= 7 || state.scores.right >= 7) {
+  if (state.scores.left >= SCORE_TO_WIN || state.scores.right >= SCORE_TO_WIN) {
     state.running = false;
     state.status = state.scores.left > state.scores.right ? "플레이어 1 승리!" : "플레이어 2 승리!";
   }
@@ -354,13 +363,14 @@ const stepRoom = (room) => {
   return { state, events };
 };
 
-// 고정 틱으로 상태 브로드캐스트
-const ensureRoomLoop = (room) => {
-  if (room.timer) return;
+const setRoomLoop = (room, tickRate, snapshotRate) => {
+  if (room.timer) clearInterval(room.timer);
+  room.tickRate = tickRate;
+  room.snapshotIntervalMs = 1000 / snapshotRate;
   room.timer = setInterval(() => {
     const { state, events } = stepRoom(room);
     const now = Date.now();
-    if (now - room.lastSnapshotAt >= SNAPSHOT_INTERVAL_MS) {
+    if (now - room.lastSnapshotAt >= room.snapshotIntervalMs) {
       room.lastSnapshotAt = now;
       const latched = room.eventLatch;
       room.eventLatch = { wall: false, paddle: false, goal: false };
@@ -381,7 +391,24 @@ const ensureRoomLoop = (room) => {
       };
       broadcast(room, { type: "state", payload });
     }
-  }, 1000 / TICK_RATE);
+  }, 1000 / tickRate);
+};
+
+const updateRoomLoop = (room) => {
+  const running = room.state.running;
+  const tickRate = running ? RUNNING_TICK_RATE : IDLE_TICK_RATE;
+  const snapshotRate = running ? RUNNING_SNAPSHOT_RATE : IDLE_SNAPSHOT_RATE;
+  if (room.timer && room.tickRate === tickRate && room.snapshotIntervalMs === 1000 / snapshotRate) {
+    return;
+  }
+  setRoomLoop(room, tickRate, snapshotRate);
+};
+
+// 상태 브로드캐스트 루프 보장
+const ensureRoomLoop = (room) => {
+  if (!room.timer) {
+    updateRoomLoop(room);
+  }
 };
 
 // WebSocket 연결 처리
@@ -458,10 +485,12 @@ const attachSocketHandlers = (ws) => {
         } else {
           room.state.status = "일시정지";
         }
+        updateRoomLoop(room);
       }
       if (message.action === "reset") {
         room.state = createState();
         resetRound(room, 1);
+        updateRoomLoop(room);
       }
     }
   });
