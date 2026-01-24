@@ -1,7 +1,7 @@
 const http = require("http");
 const path = require("path");
 const express = require("express");
-const { Server } = require("colyseus");
+const { Server } = require("@colyseus/core");
 const { WebSocketTransport } = require("@colyseus/ws-transport");
 const CONFIG = require("./config.json");
 const GameRoom = require("./server/GameRoom");
