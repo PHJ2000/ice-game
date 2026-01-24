@@ -234,10 +234,14 @@ const applyPaddleTarget = (body, target, side, dt) => {
     return true;
   }
   const distFromGoal = side === "left" ? current.x - minX : maxX - current.x;
-  const falloff = Math.min(1, Math.max(0, distFromGoal / maxDist));
-  const weight = Math.max(0.25, 1 - Math.pow(falloff, 2));
-  const dragSpeedMultiplier = 0.8;
-  const maxStep = PADDLE_SPEED * dt * dragSpeedMultiplier * weight;
+  const ratio = Math.min(1, Math.max(0, distFromGoal / maxDist));
+  let zoneMultiplier = 0.8;
+  if (ratio <= 1 / 3) {
+    zoneMultiplier = 1.2;
+  } else if (ratio <= 2 / 3) {
+    zoneMultiplier = 1.0;
+  }
+  const maxStep = PADDLE_SPEED * dt * zoneMultiplier;
   const step = Math.min(maxStep, dist);
   const scale = step / dist;
   nextX = current.x + dx * scale;
