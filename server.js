@@ -61,8 +61,7 @@ const TICK_RATE = 60;
 const FIXED_DT = 1 / TICK_RATE;
 const SNAPSHOT_RATE = 30;
 const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_RATE;
-const MIN_SUB_STEPS = 2;
-const MAX_SUB_STEPS = 5;
+const SUB_STEPS = 4;
 
 const PADDLE_SPEED_PX_PER_FRAME = 6.8;
 const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
@@ -79,11 +78,9 @@ const PUCK_INITIAL_VY = PUCK_INITIAL_VY_PX_PER_SEC * SCALE;
 const MAX_PUCK_SPEED_PX_PER_FRAME = 20;
 const MAX_PUCK_SPEED_PX_PER_SEC = MAX_PUCK_SPEED_PX_PER_FRAME * TICK_RATE;
 const MAX_PUCK_SPEED = MAX_PUCK_SPEED_PX_PER_SEC * SCALE;
-const SUBSTEP_SPEED_THRESHOLD = MAX_PUCK_SPEED * 0.55;
 
 const toWorld = (value) => value * SCALE;
 const toPixel = (value) => value / SCALE;
-const clampInt = (value, min, max) => Math.max(min, Math.min(max, value));
 
 const send = (ws, payload) => {
   if (ws.readyState === ws.OPEN) {
@@ -274,16 +271,8 @@ const stepRoom = (room) => {
   applyPaddleVelocity(leftPaddle, room.inputs.left);
   applyPaddleVelocity(rightPaddle, room.inputs.right);
 
-  const preStepVel = puck.getLinearVelocity();
-  const preStepSpeed = Math.hypot(preStepVel.x, preStepVel.y);
-  const subSteps = clampInt(
-    Math.ceil(preStepSpeed / SUBSTEP_SPEED_THRESHOLD),
-    MIN_SUB_STEPS,
-    MAX_SUB_STEPS
-  );
-
-  for (let i = 0; i < subSteps; i += 1) {
-    world.step(FIXED_DT / subSteps, 12, 8);
+  for (let i = 0; i < SUB_STEPS; i += 1) {
+    world.step(FIXED_DT / SUB_STEPS, 12, 8);
   }
 
   clampPaddlePosition(leftPaddle, "left");

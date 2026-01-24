@@ -444,8 +444,7 @@ const loop = () => {
   const perfNow = performance.now();
   const localDt = Math.min((perfNow - lastLocalUpdateAt) / 16.6667, 3);
   lastLocalUpdateAt = perfNow;
-  const adaptiveBuffer = Math.max(BASE_BUFFER_MS, Math.round((pingMs ?? 0) * 0.5));
-  const renderTime = perfNow - adaptiveBuffer;
+  const renderTime = perfNow - BASE_BUFFER_MS;
 
   frameCounter += 1;
   if (perfNow - fpsLastAt >= 500) {
@@ -510,7 +509,7 @@ const loop = () => {
       `FPS: ${fps} / 핑: ${pingMs ?? "-"}ms\n` +
       `게스트 입력 수신: ${sinceGuestInput}ms 전\n` +
       `상태 수신: ${sinceState}ms 전\n` +
-      `스냅샷 버퍼: ${snapshots.length}개 / 지연: ${adaptiveBuffer}ms`;
+      `스냅샷 버퍼: ${snapshots.length}개 / 지연: ${BASE_BUFFER_MS}ms`;
   }
 
   requestAnimationFrame(loop);
