@@ -57,7 +57,8 @@ const Protocol = (() => {
   const validateServer = (message) => {
     if (!isObject(message) || !isString(message.type)) return false;
     if (message.type === SERVER_TYPES.PONG) {
-      return isNumber(message.at);
+      if (!isNumber(message.at)) return false;
+      return message.serverTime === undefined || isNumber(message.serverTime);
     }
     if (message.type === SERVER_TYPES.ROLE) {
       return isString(message.role) && isString(message.side) && isString(message.room);

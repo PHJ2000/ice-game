@@ -66,6 +66,7 @@ window.Game = window.Game || {};
   };
 
   const localPaddle = { x: 140, y: 260, r: PADDLE_RADIUS };
+  const displayPaddle = { x: 140, y: 260, r: PADDLE_RADIUS };
   let hasLocalPaddle = false;
   let lastLocalUpdateAt = performance.now();
 
@@ -146,7 +147,8 @@ window.Game = window.Game || {};
     if (!normalized) return;
 
     if (Number.isFinite(normalized.time)) {
-      const offsetSample = Date.now() - normalized.time;
+      const clientNow = performance.timeOrigin + performance.now();
+      const offsetSample = clientNow - normalized.time;
       serverOffsetMs =
         serverOffsetMs === null ? offsetSample : Utils.lerp(serverOffsetMs, offsetSample, 0.1);
     }
@@ -187,6 +189,11 @@ window.Game = window.Game || {};
     }
     localPaddle.y = Utils.clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
     hasLocalPaddle = true;
+    if (!Number.isFinite(displayPaddle.x)) {
+      displayPaddle.x = localPaddle.x;
+      displayPaddle.y = localPaddle.y;
+      displayPaddle.r = localPaddle.r;
+    }
   };
 
   let input;
@@ -202,8 +209,16 @@ window.Game = window.Game || {};
       network.sendPing();
     },
     onPong: (message) => {
-      pingMs = Math.max(0, Math.round(performance.now() - message.at));
+      const nowPerf = performance.now();
+      const rtt = Math.max(0, nowPerf - message.at);
+      pingMs = Math.round(rtt);
       pingValueEl.textContent = `${pingMs}ms`;
+      if (Number.isFinite(message.serverTime)) {
+        const clientNow = performance.timeOrigin + nowPerf;
+        const offsetSample = clientNow - (message.serverTime + rtt / 2);
+        serverOffsetMs =
+          serverOffsetMs === null ? offsetSample : Utils.lerp(serverOffsetMs, offsetSample, 0.2);
+      }
     },
     onRole: (message) => {
       socketRole = message.role;
@@ -339,7 +354,7 @@ window.Game = window.Game || {};
     const localDt = Math.min((perfNow - lastLocalUpdateAt) / 16.6667, 3);
     lastLocalUpdateAt = perfNow;
 
-    const nowMs = Date.now();
+    const nowMs = performance.timeOrigin + perfNow;
     const offset = serverOffsetMs || 0;
     const renderTime = nowMs - offset - BASE_BUFFER_MS;
 
@@ -363,6 +378,9 @@ window.Game = window.Game || {};
         localPaddle.x = base.x;
         localPaddle.y = base.y;
         localPaddle.r = base.r;
+        displayPaddle.x = base.x;
+        displayPaddle.y = base.y;
+        displayPaddle.r = base.r;
         hasLocalPaddle = true;
       }
 
@@ -380,10 +398,14 @@ window.Game = window.Game || {};
       }
       localPaddle.y = Utils.clamp(localPaddle.y, BOUNDS.minY, BOUNDS.maxY);
 
+      displayPaddle.x = Utils.lerp(displayPaddle.x, localPaddle.x, 0.35);
+      displayPaddle.y = Utils.lerp(displayPaddle.y, localPaddle.y, 0.35);
+      displayPaddle.r = localPaddle.r;
+
       if (socketSide === "left") {
-        renderState.left = { ...renderState.left, x: localPaddle.x, y: localPaddle.y };
+        renderState.left = { ...renderState.left, x: displayPaddle.x, y: displayPaddle.y };
       } else {
-        renderState.right = { ...renderState.right, x: localPaddle.x, y: localPaddle.y };
+        renderState.right = { ...renderState.right, x: displayPaddle.x, y: displayPaddle.y };
       }
     }
 
@@ -392,6 +414,9 @@ window.Game = window.Game || {};
       localPaddle.x = base.x;
       localPaddle.y = base.y;
       localPaddle.r = base.r;
+      displayPaddle.x = base.x;
+      displayPaddle.y = base.y;
+      displayPaddle.r = base.r;
       hasLocalPaddle = true;
     }
 

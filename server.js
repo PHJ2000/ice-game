@@ -493,7 +493,7 @@ const attachSocketHandlers = (ws) => {
     if (message.type === "ping") {
       const room = rooms.get(ws.roomCode);
       if (room) touchRoom(room);
-      send(ws, { type: "pong", at: message.at });
+      send(ws, { type: "pong", at: message.at, serverTime: Date.now() });
       return;
     }
 
