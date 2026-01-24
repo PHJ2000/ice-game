@@ -299,7 +299,7 @@ const consumeCollisionEvents = (room) => {
 
 const stepRoom = (room) => {
   const { state, events } = room;
-  const { world, leftBody, rightBody, puckBody } = room.physics;
+  const { world, leftBody, rightBody, puckBody, eventQueue } = room.physics;
 
   events.wall = false;
   events.paddle = false;
@@ -491,7 +491,7 @@ const attachSocketHandlers = (ws) => {
 };
 
 const startServer = async () => {
-  await RAPIER.init();
+  await RAPIER.init({});
   wss.on("connection", attachSocketHandlers);
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}`);
