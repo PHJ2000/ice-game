@@ -3,7 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const RAPIER = require("@dimforge/rapier2d-compat");
 const { WebSocketServer } = require("ws");
-const CONFIG = require("./config");
+const CONFIG = require("./config.json");
+const Protocol = require("./shared/protocol");
 
 const port = process.env.PORT || 3000;
 const baseDir = __dirname;
@@ -12,6 +13,7 @@ const mimeTypes = {
   ".html": "text/html",
   ".css": "text/css",
   ".js": "application/javascript",
+  ".json": "application/json",
   ".wav": "audio/wav",
   ".ico": "image/x-icon",
 };
@@ -24,6 +26,12 @@ const server = http.createServer((req, res) => {
   if (pathname === "/health") {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("ok");
+    return;
+  }
+
+  if (pathname === "/config") {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(CONFIG));
     return;
   }
 
@@ -63,29 +71,49 @@ const RUNNING_TICK_RATE = 60;
 const IDLE_TICK_RATE = 10;
 const RUNNING_SNAPSHOT_RATE = 30;
 const IDLE_SNAPSHOT_RATE = 5;
-const TICK_RATE = RUNNING_TICK_RATE;
-const FIXED_DT = 1 / TICK_RATE;
+const FIXED_DT = 1 / RUNNING_TICK_RATE;
 const DEBUG_COLLISION = process.env.DEBUG_COLLISION === "1";
+
+const ROOM_EMPTY_TTL_MS = 60 * 1000;
+const ROOM_INACTIVE_TTL_MS = 15 * 60 * 1000;
 
 const PADDLE_RADIUS = CONFIG.PADDLE_RADIUS;
 const PADDLE_SPEED_PX_PER_FRAME = CONFIG.PADDLE_SPEED_PX_PER_FRAME;
-const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
+const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * RUNNING_TICK_RATE;
 const PADDLE_SPEED = PADDLE_SPEED_PX_PER_SEC * SCALE;
 
 const PUCK_RADIUS_PX = CONFIG.PUCK_RADIUS;
 const PUCK_RADIUS = PUCK_RADIUS_PX * SCALE;
 const PUCK_INITIAL_VX_PX_PER_FRAME = CONFIG.PUCK_INITIAL_VX_PX_PER_FRAME;
 const PUCK_INITIAL_VY_PX_PER_FRAME = CONFIG.PUCK_INITIAL_VY_PX_PER_FRAME;
-const PUCK_INITIAL_VX_PX_PER_SEC = PUCK_INITIAL_VX_PX_PER_FRAME * TICK_RATE;
-const PUCK_INITIAL_VY_PX_PER_SEC = PUCK_INITIAL_VY_PX_PER_FRAME * TICK_RATE;
+const PUCK_INITIAL_VX_PX_PER_SEC = PUCK_INITIAL_VX_PX_PER_FRAME * RUNNING_TICK_RATE;
+const PUCK_INITIAL_VY_PX_PER_SEC = PUCK_INITIAL_VY_PX_PER_FRAME * RUNNING_TICK_RATE;
 const PUCK_INITIAL_VX = PUCK_INITIAL_VX_PX_PER_SEC * SCALE;
 const PUCK_INITIAL_VY = PUCK_INITIAL_VY_PX_PER_SEC * SCALE;
 const MAX_PUCK_SPEED_PX_PER_FRAME = CONFIG.MAX_PUCK_SPEED_PX_PER_FRAME;
-const MAX_PUCK_SPEED_PX_PER_SEC = MAX_PUCK_SPEED_PX_PER_FRAME * TICK_RATE;
+const MAX_PUCK_SPEED_PX_PER_SEC = MAX_PUCK_SPEED_PX_PER_FRAME * RUNNING_TICK_RATE;
 const MAX_PUCK_SPEED = MAX_PUCK_SPEED_PX_PER_SEC * SCALE;
 
 const toWorld = (value) => value * SCALE;
 const toPixel = (value) => value / SCALE;
+
+const LOG_LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
+const LOG_LEVEL = process.env.LOG_LEVEL || "info";
+const LOG_THRESHOLD = LOG_LEVELS[LOG_LEVEL] ?? LOG_LEVELS.info;
+const log = {
+  debug: (...args) => {
+    if (LOG_THRESHOLD <= LOG_LEVELS.debug) console.log(...args);
+  },
+  info: (...args) => {
+    if (LOG_THRESHOLD <= LOG_LEVELS.info) console.log(...args);
+  },
+  warn: (...args) => {
+    if (LOG_THRESHOLD <= LOG_LEVELS.warn) console.warn(...args);
+  },
+  error: (...args) => {
+    if (LOG_THRESHOLD <= LOG_LEVELS.error) console.error(...args);
+  },
+};
 
 const send = (ws, payload) => {
   if (ws.readyState === ws.OPEN) {
@@ -95,6 +123,25 @@ const send = (ws, payload) => {
 
 const broadcast = (room, payload) => {
   room.clients.forEach((client) => send(client, payload));
+};
+
+const touchRoom = (room) => {
+  room.lastActivityAt = Date.now();
+};
+
+const expireRoom = (room, reason) => {
+  broadcast(room, { type: "room-expired", reason });
+  room.clients.forEach((client) => {
+    try {
+      client.close();
+    } catch (error) {
+      // ignore close errors
+    }
+  });
+  clearInterval(room.timer);
+  if (room.code) {
+    rooms.delete(room.code);
+  }
 };
 
 // 초기 게임 상태
@@ -202,6 +249,8 @@ const createRoom = () => {
     lastSeq: { left: 0, right: 0 },
     lastSnapshotAt: Date.now(),
     lastCollisionLogAt: 0,
+    lastActivityAt: Date.now(),
+    lastEmptyAt: Date.now(),
     eventLatch: { wall: false, paddle: false, goal: false },
     timer: null,
     tickRate,
@@ -289,7 +338,7 @@ const consumeCollisionEvents = (room) => {
           const puck = room.physics.puckBody.translation();
           const left = room.physics.leftBody.translation();
           const right = room.physics.rightBody.translation();
-          console.log(
+          log.debug(
             `[충돌] room=${room.hostId ?? "-"} puck=(${toPixel(puck.x).toFixed(1)},${toPixel(puck.y).toFixed(
               1
             )}) left=(${toPixel(left.x).toFixed(1)},${toPixel(left.y).toFixed(1)}) right=(${toPixel(
@@ -370,24 +419,36 @@ const setRoomLoop = (room, tickRate, snapshotRate) => {
   room.timer = setInterval(() => {
     const { state, events } = stepRoom(room);
     const now = Date.now();
+    if (room.clients.size === 0 && now - room.lastEmptyAt > ROOM_EMPTY_TTL_MS) {
+      expireRoom(room, "empty");
+      return;
+    }
+    if (
+      room.clients.size > 0 &&
+      !room.state.running &&
+      now - room.lastActivityAt > ROOM_INACTIVE_TTL_MS
+    ) {
+      expireRoom(room, "inactive");
+      return;
+    }
     if (now - room.lastSnapshotAt >= room.snapshotIntervalMs) {
       room.lastSnapshotAt = now;
       const latched = room.eventLatch;
       room.eventLatch = { wall: false, paddle: false, goal: false };
       const payload = {
-        left: state.left,
-        right: state.right,
-        puck: state.puck,
-        scores: state.scores,
-        running: state.running,
-        status: state.status,
-        events: {
-          wall: events.wall || latched.wall,
-          paddle: events.paddle || latched.paddle,
-          goal: events.goal || latched.goal,
-        },
-        acks: { left: room.lastSeq.left, right: room.lastSeq.right },
-        time: now,
+        t: now,
+        r: state.running ? 1 : 0,
+        s: [state.scores.left, state.scores.right],
+        st: state.status,
+        l: [state.left.x, state.left.y, state.left.r],
+        rt: [state.right.x, state.right.y, state.right.r],
+        p: [state.puck.x, state.puck.y, state.puck.r, state.puck.vx, state.puck.vy],
+        e: [
+          events.wall || latched.wall ? 1 : 0,
+          events.paddle || latched.paddle ? 1 : 0,
+          events.goal || latched.goal ? 1 : 0,
+        ],
+        a: [room.lastSeq.left, room.lastSeq.right],
       };
       broadcast(room, { type: "state", payload });
     }
@@ -424,7 +485,14 @@ const attachSocketHandlers = (ws) => {
       return;
     }
 
+    if (!Protocol.isClientMessage(message)) {
+      log.warn("[ws] invalid client message", message?.type);
+      return;
+    }
+
     if (message.type === "ping") {
+      const room = rooms.get(ws.roomCode);
+      if (room) touchRoom(room);
       send(ws, { type: "pong", at: message.at });
       return;
     }
@@ -437,6 +505,7 @@ const attachSocketHandlers = (ws) => {
       if (!room) {
         room = createRoom();
         room.hostId = id;
+        room.code = roomCode;
         rooms.set(roomCode, room);
         ensureRoomLoop(room);
       }
@@ -451,6 +520,7 @@ const attachSocketHandlers = (ws) => {
       ws.side = room.hostId === id ? "left" : "right";
       const role = room.hostId === id ? "host" : "guest";
       send(ws, { type: "role", role, room: roomCode, side: ws.side });
+      touchRoom(room);
 
       if (role === "guest") {
         const host = room.clients.get(room.hostId);
@@ -468,6 +538,7 @@ const attachSocketHandlers = (ws) => {
       if (typeof message.payload.seq === "number" && message.payload.seq > room.lastSeq[ws.side]) {
         room.lastSeq[ws.side] = message.payload.seq;
       }
+      touchRoom(room);
       if (ws.side === "right") {
         const host = room.clients.get(room.hostId);
         if (host) send(host, { type: "guest-input" });
@@ -492,6 +563,7 @@ const attachSocketHandlers = (ws) => {
         resetRound(room, 1);
         updateRoomLoop(room);
       }
+      touchRoom(room);
     }
   });
 
@@ -504,6 +576,13 @@ const attachSocketHandlers = (ws) => {
 
     if (room.hostId === id) {
       broadcast(room, { type: "host-left" });
+      room.clients.forEach((client) => {
+        try {
+          client.close();
+        } catch (error) {
+          // ignore close errors
+        }
+      });
       clearInterval(room.timer);
       rooms.delete(roomCode);
       return;
@@ -513,8 +592,7 @@ const attachSocketHandlers = (ws) => {
     if (host) send(host, { type: "guest-left" });
 
     if (room.clients.size === 0) {
-      clearInterval(room.timer);
-      rooms.delete(roomCode);
+      room.lastEmptyAt = Date.now();
     }
   });
 };
@@ -523,7 +601,7 @@ const startServer = async () => {
   await RAPIER.init({});
   wss.on("connection", attachSocketHandlers);
   server.listen(port, () => {
-    console.log(`Server running on http://localhost:${port}`);
+    log.info(`Server running on http://localhost:${port}`);
   });
 };
 

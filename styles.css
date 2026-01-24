@@ -39,6 +39,12 @@ body {
   margin-bottom: 28px;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .brand {
   display: flex;
   align-items: center;

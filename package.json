@@ -4,7 +4,8 @@
   "description": "Simple 1v1 online air hockey",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "@dimforge/rapier2d-compat": "^0.19.3",
