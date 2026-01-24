@@ -253,7 +253,8 @@ const applyPaddleTarget = (body, target, side, dt) => {
   if (dist < 0.0001) {
     return true;
   }
-  const maxStep = PADDLE_SPEED * dt;
+  const dragSpeedMultiplier = 1.2;
+  const maxStep = PADDLE_SPEED * dt * dragSpeedMultiplier;
   const step = Math.min(maxStep, dist);
   const scale = step / dist;
   nextX = current.x + dx * scale;
@@ -496,7 +497,7 @@ class GameRoom extends Room {
       resetPuck(this, this.pendingDirection, false);
     }
 
-    const events = { wall: false, paddle: false, goal: false };
+    const events = { wall: false, paddle: false, goal: false, scorer: null };
     const subDt = FIXED_DT / SUBSTEPS;
     let goalScored = false;
     const paused = Boolean(this.pendingResetAt);
@@ -555,6 +556,7 @@ class GameRoom extends Room {
           this.pendingDirection = 1;
           resetPuck(this, 1, true);
           events.goal = true;
+          events.scorer = "right";
           goalScored = true;
         }
 
@@ -565,6 +567,7 @@ class GameRoom extends Room {
           this.pendingDirection = -1;
           resetPuck(this, -1, true);
           events.goal = true;
+          events.scorer = "left";
           goalScored = true;
         }
 

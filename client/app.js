@@ -85,8 +85,8 @@ window.Game = window.Game || {};
   const clampToSide = (pos) => {
     if (!pos || !side) return null;
     const mid = ARENA.width / 2;
-    const minX = side === "left" ? BOUNDS.minX : mid + WALL;
-    const maxX = side === "left" ? mid - WALL : BOUNDS.maxX;
+    const minX = side === "left" ? BOUNDS.minX : mid;
+    const maxX = side === "left" ? mid : BOUNDS.maxX;
     return {
       x: Utils.clamp(pos.x, minX, maxX),
       y: Utils.clamp(pos.y, BOUNDS.minY, BOUNDS.maxY),
@@ -176,6 +176,9 @@ window.Game = window.Game || {};
       }
       if (events.goal) {
         Audio.playGoal();
+        if (events.scorer && events.scorer === side) {
+          Audio.playCheer();
+        }
       }
     },
   });

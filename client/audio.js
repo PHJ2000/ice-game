@@ -86,6 +86,7 @@ window.Game.Audio = (() => {
     playWall: () => playTone(360, 0.08, 0.12),
     playPaddle: () => playTone(520, 0.09, 0.18),
     playGoal: () => playTone(220, 0.22, 0.3),
+    playCheer: () => playTone(740, 0.18, 0.24),
     isMuted: () => muted,
     setMuted,
     toggleMute,
