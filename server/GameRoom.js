@@ -213,6 +213,7 @@ const applyPaddleTarget = (body, target, side) => {
   const minX = toWorld(WALL);
   const maxX = toWorld(ARENA.width - WALL);
   const mid = toWorld(ARENA.width / 2);
+  const maxDist = Math.max(0.0001, mid - toWorld(WALL) - minX);
 
   const current = body.translation();
   let nextX = toWorld(target.x);
@@ -228,7 +229,10 @@ const applyPaddleTarget = (body, target, side) => {
   const dx = nextX - current.x;
   const dy = nextY - current.y;
   const dist = Math.hypot(dx, dy);
-  const maxStep = PADDLE_SPEED * FIXED_DT * 1.0;
+  const distFromGoal = side === "left" ? current.x - minX : maxX - current.x;
+  const falloff = Math.min(1, Math.max(0, distFromGoal / maxDist));
+  const weight = Math.max(0.25, 1 - Math.pow(falloff, 2));
+  const maxStep = PADDLE_SPEED * FIXED_DT * weight;
   if (dist > maxStep) {
     const scale = maxStep / dist;
     nextX = current.x + dx * scale;
