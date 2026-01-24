@@ -14,7 +14,6 @@ const connectionStatus = document.getElementById("connectionStatus");
 const debugText = document.getElementById("debugText");
 
 // 입력/상수
-const maxScore = 7;
 const inputState = { up: false, down: false, left: false, right: false };
 const BASE_BUFFER_MS = 80;
 const ARENA = { width: 900, height: 520 };
@@ -38,10 +37,8 @@ let socket;
 let role = null;
 let side = null;
 let roomCode = "";
-let lastSentAt = 0;
 let lastStateAt = 0;
 let lastGuestInputAt = 0;
-let authoritativeState = null;
 let inputSeq = 0;
 let lastInputSentAt = performance.now();
 let pendingInputs = [];
@@ -56,7 +53,6 @@ let bgm;
 
 // 핑
 let pingMs = null;
-let lastPingSentAt = 0;
 
 // 스냅샷 버퍼
 const snapshots = [];
@@ -136,8 +132,8 @@ const sendMessage = (data) => {
 // 핑 측정(왕복 지연)
 const sendPing = () => {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  lastPingSentAt = performance.now();
-  sendMessage({ type: "ping", at: lastPingSentAt });
+  const sentAt = performance.now();
+  sendMessage({ type: "ping", at: sentAt });
 };
 
 // 게스트 입력 전송
@@ -349,7 +345,6 @@ const connect = () => {
 
     if (message.type === "state") {
       lastStateAt = performance.now();
-      authoritativeState = message.payload;
       pushSnapshot(message.payload);
       reconcileLocalPaddle(message.payload);
       scoreLeftEl.textContent = message.payload.scores.left.toString();

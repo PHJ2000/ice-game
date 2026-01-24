@@ -25,6 +25,7 @@ const server = http.createServer((req, res) => {
     res.end("ok");
     return;
   }
+
   // 쿼리스트링은 제거하고 정적 파일만 제공
   const safePath = pathname === "/" ? "/index.html" : pathname;
   const filePath = path.join(baseDir, path.normalize(safePath));
@@ -55,18 +56,27 @@ let nextId = 1;
 const ARENA = { width: 900, height: 520 };
 const WALL = 40;
 const GOAL_HEIGHT = 140;
-const SCALE = 0.01; // px -> m
-const FIXED_DT = 1 / 60;
+const SCALE = 0.01; // 1px = 0.01m
+const TICK_RATE = 60;
+const FIXED_DT = 1 / TICK_RATE;
 const SUB_STEPS = 2;
-const PADDLE_SPEED_PX = 6.4;
-const PADDLE_SPEED = PADDLE_SPEED_PX * SCALE * 60;
 
-const PUCK_INITIAL_VX_PX = 6.2;
-const PUCK_INITIAL_VY_PX = 3.6;
-const PUCK_INITIAL_VX = PUCK_INITIAL_VX_PX * SCALE * 60;
-const PUCK_INITIAL_VY = PUCK_INITIAL_VY_PX * SCALE * 60;
-const MAX_PUCK_SPEED_PX = 18;
-const MAX_PUCK_SPEED = MAX_PUCK_SPEED_PX * SCALE * 60;
+const PADDLE_SPEED_PX_PER_FRAME = 6.4;
+const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
+const PADDLE_SPEED = PADDLE_SPEED_PX_PER_SEC * SCALE;
+
+const PUCK_RADIUS_PX = 16;
+const PUCK_RADIUS = PUCK_RADIUS_PX * SCALE;
+const PUCK_INITIAL_VX_PX_PER_FRAME = 6.2;
+const PUCK_INITIAL_VY_PX_PER_FRAME = 3.6;
+const PUCK_INITIAL_VX_PX_PER_SEC = PUCK_INITIAL_VX_PX_PER_FRAME * TICK_RATE;
+const PUCK_INITIAL_VY_PX_PER_SEC = PUCK_INITIAL_VY_PX_PER_FRAME * TICK_RATE;
+const PUCK_INITIAL_VX = PUCK_INITIAL_VX_PX_PER_SEC * SCALE;
+const PUCK_INITIAL_VY = PUCK_INITIAL_VY_PX_PER_SEC * SCALE;
+
+const MAX_PUCK_SPEED_PX_PER_FRAME = 18;
+const MAX_PUCK_SPEED_PX_PER_SEC = MAX_PUCK_SPEED_PX_PER_FRAME * TICK_RATE;
+const MAX_PUCK_SPEED = MAX_PUCK_SPEED_PX_PER_SEC * SCALE;
 
 const toWorld = (value) => value * SCALE;
 const toPixel = (value) => value / SCALE;
@@ -85,7 +95,13 @@ const broadcast = (room, payload) => {
 const createState = () => ({
   left: { x: 140, y: 260, r: 26 },
   right: { x: 760, y: 260, r: 26 },
-  puck: { x: 450, y: 260, r: 16, vx: PUCK_INITIAL_VX_PX * 60, vy: PUCK_INITIAL_VY_PX * 60 },
+  puck: {
+    x: 450,
+    y: 260,
+    r: PUCK_RADIUS_PX,
+    vx: PUCK_INITIAL_VX_PX_PER_SEC,
+    vy: PUCK_INITIAL_VY_PX_PER_SEC,
+  },
   scores: { left: 0, right: 0 },
   running: false,
   status: "스페이스를 누르면 시작!",
@@ -135,7 +151,7 @@ const createPhysicsWorld = () => {
     bullet: true,
   });
   puck.setUserData("puck");
-  puck.createFixture(planck.Circle(toWorld(16)), { restitution: 0.95, friction: 0 });
+  puck.createFixture(planck.Circle(PUCK_RADIUS), { restitution: 0.95, friction: 0 });
   puck.setLinearDamping(0.005);
 
   return { world, leftPaddle, rightPaddle, puck };
@@ -215,8 +231,8 @@ const resetRound = (room, direction) => {
   rightPaddle.setLinearVelocity(planck.Vec2(0, 0));
 
   puck.setPosition(planck.Vec2(toWorld(450), toWorld(260)));
-  const vyPx = (Math.random() * 2.8 + 2.2) * 60 * (Math.random() > 0.5 ? 1 : -1);
-  puck.setLinearVelocity(planck.Vec2(PUCK_INITIAL_VX * direction, vyPx * SCALE));
+  const vyPxPerSec = (Math.random() * 2.8 + 2.2) * TICK_RATE * (Math.random() > 0.5 ? 1 : -1);
+  puck.setLinearVelocity(planck.Vec2(PUCK_INITIAL_VX * direction, vyPxPerSec * SCALE));
 };
 
 const syncStateFromBodies = (room) => {
@@ -276,14 +292,14 @@ const stepRoom = (room) => {
   const minX = toWorld(WALL);
   const maxX = toWorld(ARENA.width - WALL);
 
-  if (puckPos.x - toWorld(16) <= minX && puckPos.y > goalTop && puckPos.y < goalBottom) {
+  if (puckPos.x - PUCK_RADIUS <= minX && puckPos.y > goalTop && puckPos.y < goalBottom) {
     state.scores.right += 1;
     state.status = "플레이어 2 득점!";
     resetRound(room, 1);
     events.goal = true;
   }
 
-  if (puckPos.x + toWorld(16) >= maxX && puckPos.y > goalTop && puckPos.y < goalBottom) {
+  if (puckPos.x + PUCK_RADIUS >= maxX && puckPos.y > goalTop && puckPos.y < goalBottom) {
     state.scores.left += 1;
     state.status = "플레이어 1 득점!";
     resetRound(room, -1);
@@ -316,7 +332,7 @@ const ensureRoomLoop = (room) => {
       time: Date.now(),
     };
     broadcast(room, { type: "state", payload });
-  }, 16);
+  }, 1000 / TICK_RATE);
 };
 
 // WebSocket 연결 처리
