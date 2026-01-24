@@ -214,6 +214,7 @@ const applyPaddleTarget = (body, target, side) => {
   const maxX = toWorld(ARENA.width - WALL);
   const mid = toWorld(ARENA.width / 2);
 
+  const current = body.translation();
   let nextX = toWorld(target.x);
   let nextY = toWorld(target.y);
 
@@ -223,6 +224,16 @@ const applyPaddleTarget = (body, target, side) => {
     nextX = clamp(nextX, mid + toWorld(WALL), maxX);
   }
   nextY = clamp(nextY, minY, maxY);
+
+  const dx = nextX - current.x;
+  const dy = nextY - current.y;
+  const dist = Math.hypot(dx, dy);
+  const maxStep = PADDLE_SPEED * FIXED_DT * 2.2;
+  if (dist > maxStep) {
+    const scale = maxStep / dist;
+    nextX = current.x + dx * scale;
+    nextY = current.y + dy * scale;
+  }
 
   body.setNextKinematicTranslation(new RAPIER.Vector2(nextX, nextY));
   return true;
