@@ -61,6 +61,7 @@ const TICK_RATE = 60;
 const FIXED_DT = 1 / TICK_RATE;
 const SNAPSHOT_RATE = 30;
 const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_RATE;
+const DEBUG_COLLISION = true;
 
 const PADDLE_SPEED_PX_PER_FRAME = 6.8;
 const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
@@ -193,6 +194,7 @@ const createRoom = () => {
     },
     lastSeq: { left: 0, right: 0 },
     lastSnapshotAt: Date.now(),
+    lastCollisionLogAt: 0,
     timer: null,
     physics,
     events,
@@ -269,6 +271,22 @@ const consumeCollisionEvents = (room) => {
     const typeB = colliderB?.userData?.type;
     if ((typeA === "puck" && typeB === "paddle") || (typeA === "paddle" && typeB === "puck")) {
       events.paddle = true;
+      if (DEBUG_COLLISION) {
+        const now = Date.now();
+        if (now - room.lastCollisionLogAt > 200) {
+          room.lastCollisionLogAt = now;
+          const puck = room.physics.puckBody.translation();
+          const left = room.physics.leftBody.translation();
+          const right = room.physics.rightBody.translation();
+          console.log(
+            `[충돌] room=${room.hostId ?? "-"} puck=(${toPixel(puck.x).toFixed(1)},${toPixel(puck.y).toFixed(
+              1
+            )}) left=(${toPixel(left.x).toFixed(1)},${toPixel(left.y).toFixed(1)}) right=(${toPixel(
+              right.x
+            ).toFixed(1)},${toPixel(right.y).toFixed(1)})`
+          );
+        }
+      }
     }
     if ((typeA === "puck" && typeB === "wall") || (typeA === "wall" && typeB === "puck")) {
       events.wall = true;
