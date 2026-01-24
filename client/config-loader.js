@@ -5,6 +5,7 @@ window.Game.Config = {
     ARENA: { width: 900, height: 520 },
     WALL: 40,
     GOAL_HEIGHT: 140,
+    GOAL_DEPTH: 30,
     SCORE_TO_WIN: 7,
     BASE_BUFFER_MS: 140,
     PADDLE_RADIUS: 26,

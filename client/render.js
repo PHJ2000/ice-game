@@ -3,7 +3,7 @@ window.Game = window.Game || {};
 window.Game.Render = (() => {
   const create = (canvas, config) => {
     const ctx = canvas.getContext("2d");
-    const { WALL, GOAL_HEIGHT } = config;
+    const { WALL, GOAL_HEIGHT, GOAL_DEPTH } = config;
 
     const draw = (renderState, hitFlashUntil) => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -48,8 +48,8 @@ window.Game.Render = (() => {
       }
 
       const goalTop = canvas.height / 2 - GOAL_HEIGHT / 2;
-      const goalWidth = WALL / 2;
-      const goalInset = WALL / 2;
+      const goalWidth = GOAL_DEPTH;
+      const goalInset = WALL - GOAL_DEPTH;
       ctx.fillStyle = "rgba(255, 123, 47, 0.15)";
       ctx.fillRect(goalInset, goalTop, goalWidth, GOAL_HEIGHT);
       ctx.fillStyle = "rgba(38, 62, 89, 0.15)";

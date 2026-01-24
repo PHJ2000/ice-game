@@ -23,6 +23,7 @@ window.Game = window.Game || {};
     ARENA,
     WALL,
     GOAL_HEIGHT,
+    GOAL_DEPTH,
     SCORE_TO_WIN,
     BASE_BUFFER_MS,
     INPUT_SEND_INTERVAL_MS,
@@ -48,7 +49,7 @@ window.Game = window.Game || {};
     });
   }
 
-  const renderer = Render.create(canvas, { WALL, GOAL_HEIGHT });
+  const renderer = Render.create(canvas, { WALL, GOAL_HEIGHT, GOAL_DEPTH });
 
   const renderState = {
     left: { x: 140, y: 260, r: PADDLE_RADIUS },

@@ -8,6 +8,7 @@ const rapierReady = RAPIER.init({});
 const ARENA = CONFIG.ARENA;
 const WALL = CONFIG.WALL;
 const GOAL_HEIGHT = CONFIG.GOAL_HEIGHT;
+const GOAL_DEPTH = CONFIG.GOAL_DEPTH || 30;
 const SCORE_TO_WIN = CONFIG.SCORE_TO_WIN;
 const SCALE = 0.01;
 const TICK_RATE = 60;
@@ -106,6 +107,7 @@ const buildWalls = (world) => {
   const maxY = toWorld(ARENA.height - WALL);
   const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
   const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
+  const goalDepth = toWorld(Math.min(GOAL_DEPTH, WALL));
 
   const fixed = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
   const wallFixture = RAPIER.ColliderDesc.segment;
@@ -124,6 +126,14 @@ const buildWalls = (world) => {
   createWall(new RAPIER.Vector2(minX, goalBottom), new RAPIER.Vector2(minX, maxY));
   createWall(new RAPIER.Vector2(maxX, minY), new RAPIER.Vector2(maxX, goalTop));
   createWall(new RAPIER.Vector2(maxX, goalBottom), new RAPIER.Vector2(maxX, maxY));
+
+  // Goal pockets (back + posts)
+  createWall(new RAPIER.Vector2(minX - goalDepth, goalTop), new RAPIER.Vector2(minX, goalTop));
+  createWall(new RAPIER.Vector2(minX - goalDepth, goalBottom), new RAPIER.Vector2(minX, goalBottom));
+  createWall(new RAPIER.Vector2(minX - goalDepth, goalTop), new RAPIER.Vector2(minX - goalDepth, goalBottom));
+  createWall(new RAPIER.Vector2(maxX, goalTop), new RAPIER.Vector2(maxX + goalDepth, goalTop));
+  createWall(new RAPIER.Vector2(maxX, goalBottom), new RAPIER.Vector2(maxX + goalDepth, goalBottom));
+  createWall(new RAPIER.Vector2(maxX + goalDepth, goalTop), new RAPIER.Vector2(maxX + goalDepth, goalBottom));
 };
 
 const createPhysicsWorld = () => {
@@ -413,22 +423,34 @@ class GameRoom extends Room {
       }
 
       const puckPos = puckBody.translation();
-      const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
-      const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
-      const minX = toWorld(WALL);
-      const maxX = toWorld(ARENA.width - WALL);
+  const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
+  const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
+  const minX = toWorld(WALL);
+  const maxX = toWorld(ARENA.width - WALL);
+  const goalDepth = toWorld(Math.min(GOAL_DEPTH, WALL));
 
-      if (puckPos.x - PUCK_RADIUS <= minX && puckPos.y > goalTop && puckPos.y < goalBottom) {
-        state.scoreRight += 1;
-        state.status = "플레이어 2 득점!";
-        resetRound(this, 1);
-        events.goal = true;
-      }
+  const leftInGoal =
+    puckPos.y > goalTop &&
+    puckPos.y < goalBottom &&
+    puckPos.x - PUCK_RADIUS >= minX - goalDepth &&
+    puckPos.x + PUCK_RADIUS <= minX;
+  const rightInGoal =
+    puckPos.y > goalTop &&
+    puckPos.y < goalBottom &&
+    puckPos.x - PUCK_RADIUS >= maxX &&
+    puckPos.x + PUCK_RADIUS <= maxX + goalDepth;
 
-      if (puckPos.x + PUCK_RADIUS >= maxX && puckPos.y > goalTop && puckPos.y < goalBottom) {
-        state.scoreLeft += 1;
-        state.status = "플레이어 1 득점!";
-        resetRound(this, -1);
+  if (leftInGoal) {
+    state.scoreRight += 1;
+    state.status = "플레이어 2 득점!";
+    resetRound(this, 1);
+    events.goal = true;
+  }
+
+  if (rightInGoal) {
+    state.scoreLeft += 1;
+    state.status = "플레이어 1 득점!";
+    resetRound(this, -1);
         events.goal = true;
       }
 
