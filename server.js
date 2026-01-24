@@ -1,7 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const planck = require("planck-js");
+const RAPIER = require("@dimforge/rapier2d-compat");
 const { WebSocketServer } = require("ws");
 
 const port = process.env.PORT || 3000;
@@ -61,7 +61,6 @@ const TICK_RATE = 60;
 const FIXED_DT = 1 / TICK_RATE;
 const SNAPSHOT_RATE = 30;
 const SNAPSHOT_INTERVAL_MS = 1000 / SNAPSHOT_RATE;
-const SUB_STEPS = 4;
 
 const PADDLE_SPEED_PX_PER_FRAME = 6.8;
 const PADDLE_SPEED_PX_PER_SEC = PADDLE_SPEED_PX_PER_FRAME * TICK_RATE;
@@ -108,14 +107,7 @@ const createState = () => ({
   status: "스페이스를 누르면 시작!",
 });
 
-// 물리 월드 생성
-const createPhysicsWorld = () => {
-  const Vec2 = planck.Vec2;
-  const world = planck.World(Vec2(0, 0));
-
-  const wallBody = world.createBody();
-  wallBody.setUserData("wall");
-
+const buildWalls = (world) => {
   const minX = toWorld(WALL);
   const maxX = toWorld(ARENA.width - WALL);
   const minY = toWorld(WALL);
@@ -123,56 +115,73 @@ const createPhysicsWorld = () => {
   const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
   const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
 
-  const wallFixture = { restitution: 0.98, friction: 0 };
-  wallBody.createFixture(planck.Edge(Vec2(minX, minY), Vec2(maxX, minY)), wallFixture);
-  wallBody.createFixture(planck.Edge(Vec2(minX, maxY), Vec2(maxX, maxY)), wallFixture);
-  wallBody.createFixture(planck.Edge(Vec2(minX, minY), Vec2(minX, goalTop)), wallFixture);
-  wallBody.createFixture(planck.Edge(Vec2(minX, goalBottom), Vec2(minX, maxY)), wallFixture);
-  wallBody.createFixture(planck.Edge(Vec2(maxX, minY), Vec2(maxX, goalTop)), wallFixture);
-  wallBody.createFixture(planck.Edge(Vec2(maxX, goalBottom), Vec2(maxX, maxY)), wallFixture);
+  const fixed = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  const wallFixture = RAPIER.ColliderDesc.segment;
 
-  const leftPaddle = world.createBody({
-    type: "kinematic",
-    position: Vec2(toWorld(140), toWorld(260)),
-  });
-  leftPaddle.setUserData("paddle");
-  leftPaddle.createFixture(planck.Circle(toWorld(26)), { restitution: 0.6, friction: 0 });
+  const createWall = (start, end) => {
+    const collider = world.createCollider(wallFixture(start, end), fixed);
+    collider.setRestitution(0.98);
+    collider.setFriction(0);
+    collider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    collider.setUserData({ type: "wall" });
+  };
 
-  const rightPaddle = world.createBody({
-    type: "kinematic",
-    position: Vec2(toWorld(760), toWorld(260)),
-  });
-  rightPaddle.setUserData("paddle");
-  rightPaddle.createFixture(planck.Circle(toWorld(26)), { restitution: 0.6, friction: 0 });
+  createWall(new RAPIER.Vector2(minX, minY), new RAPIER.Vector2(maxX, minY));
+  createWall(new RAPIER.Vector2(minX, maxY), new RAPIER.Vector2(maxX, maxY));
+  createWall(new RAPIER.Vector2(minX, minY), new RAPIER.Vector2(minX, goalTop));
+  createWall(new RAPIER.Vector2(minX, goalBottom), new RAPIER.Vector2(minX, maxY));
+  createWall(new RAPIER.Vector2(maxX, minY), new RAPIER.Vector2(maxX, goalTop));
+  createWall(new RAPIER.Vector2(maxX, goalBottom), new RAPIER.Vector2(maxX, maxY));
+};
 
-  const puck = world.createBody({
-    type: "dynamic",
-    position: Vec2(toWorld(450), toWorld(260)),
-    bullet: true,
-  });
-  puck.setUserData("puck");
-  puck.createFixture(planck.Circle(PUCK_RADIUS), { restitution: 0.95, friction: 0 });
-  puck.setLinearDamping(0.005);
+// 물리 월드 생성
+const createPhysicsWorld = () => {
+  const world = new RAPIER.World(new RAPIER.Vector2(0, 0));
+  const eventQueue = new RAPIER.EventQueue(true);
 
-  return { world, leftPaddle, rightPaddle, puck };
+  buildWalls(world);
+
+  const leftBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(toWorld(140), toWorld(260))
+  );
+  const leftCollider = world.createCollider(RAPIER.ColliderDesc.ball(toWorld(26)), leftBody);
+  leftCollider.setRestitution(0.6);
+  leftCollider.setFriction(0);
+  leftCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+  leftCollider.setUserData({ type: "paddle" });
+
+  const rightBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(toWorld(760), toWorld(260))
+  );
+  const rightCollider = world.createCollider(RAPIER.ColliderDesc.ball(toWorld(26)), rightBody);
+  rightCollider.setRestitution(0.6);
+  rightCollider.setFriction(0);
+  rightCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+  rightCollider.setUserData({ type: "paddle" });
+
+  const puckBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.dynamic().setTranslation(toWorld(450), toWorld(260)).setCcdEnabled(true)
+  );
+  const puckCollider = world.createCollider(RAPIER.ColliderDesc.ball(PUCK_RADIUS), puckBody);
+  puckCollider.setRestitution(0.95);
+  puckCollider.setFriction(0);
+  puckCollider.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+  puckCollider.setUserData({ type: "puck" });
+  puckBody.setLinearDamping(0.01);
+
+  return {
+    world,
+    eventQueue,
+    leftBody,
+    rightBody,
+    puckBody,
+  };
 };
 
 // 방 생성
 const createRoom = () => {
   const physics = createPhysicsWorld();
   const events = { wall: false, paddle: false, goal: false };
-
-  physics.world.on("begin-contact", (contact) => {
-    const a = contact.getFixtureA().getBody().getUserData();
-    const b = contact.getFixtureB().getBody().getUserData();
-    if (!a || !b) return;
-    if ((a === "puck" && b === "paddle") || (a === "paddle" && b === "puck")) {
-      events.paddle = true;
-    }
-    if ((a === "puck" && b === "wall") || (a === "wall" && b === "puck")) {
-      events.wall = true;
-    }
-  });
 
   return {
     hostId: null,
@@ -190,58 +199,53 @@ const createRoom = () => {
   };
 };
 
-// 입력을 패들 속도로 변환
-const applyPaddleVelocity = (body, input) => {
-  let vx = 0;
-  let vy = 0;
-  if (input.left) vx -= PADDLE_SPEED;
-  if (input.right) vx += PADDLE_SPEED;
-  if (input.up) vy -= PADDLE_SPEED;
-  if (input.down) vy += PADDLE_SPEED;
-  body.setLinearVelocity(planck.Vec2(vx, vy));
-};
+const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
 
-const clampPaddlePosition = (body, side) => {
-  const pos = body.getPosition();
+// 입력을 패들 목표 위치로 변환
+const applyPaddleInput = (body, input, side) => {
+  const current = body.translation();
+  let nextX = current.x;
+  let nextY = current.y;
+
+  const step = PADDLE_SPEED * FIXED_DT;
+  if (input.left) nextX -= step;
+  if (input.right) nextX += step;
+  if (input.up) nextY -= step;
+  if (input.down) nextY += step;
+
   const minY = toWorld(WALL);
   const maxY = toWorld(ARENA.height - WALL);
   const minX = toWorld(WALL);
   const maxX = toWorld(ARENA.width - WALL);
   const mid = toWorld(ARENA.width / 2);
 
-  let x = pos.x;
-  let y = pos.y;
-
   if (side === "left") {
-    x = Math.min(Math.max(x, minX), mid - toWorld(WALL));
+    nextX = clamp(nextX, minX, mid - toWorld(WALL));
   } else {
-    x = Math.min(Math.max(x, mid + toWorld(WALL)), maxX);
+    nextX = clamp(nextX, mid + toWorld(WALL), maxX);
   }
+  nextY = clamp(nextY, minY, maxY);
 
-  y = Math.min(Math.max(y, minY), maxY);
-
-  body.setPosition(planck.Vec2(x, y));
+  body.setNextKinematicTranslation(new RAPIER.Vector2(nextX, nextY));
 };
 
 const resetRound = (room, direction) => {
-  const { leftPaddle, rightPaddle, puck } = room.physics;
+  const { leftBody, rightBody, puckBody } = room.physics;
 
-  leftPaddle.setPosition(planck.Vec2(toWorld(140), toWorld(260)));
-  rightPaddle.setPosition(planck.Vec2(toWorld(760), toWorld(260)));
-  leftPaddle.setLinearVelocity(planck.Vec2(0, 0));
-  rightPaddle.setLinearVelocity(planck.Vec2(0, 0));
+  leftBody.setTranslation(new RAPIER.Vector2(toWorld(140), toWorld(260)), true);
+  rightBody.setTranslation(new RAPIER.Vector2(toWorld(760), toWorld(260)), true);
 
-  puck.setPosition(planck.Vec2(toWorld(450), toWorld(260)));
+  puckBody.setTranslation(new RAPIER.Vector2(toWorld(450), toWorld(260)), true);
   const vyPxPerSec = (Math.random() * 2.8 + 2.2) * TICK_RATE * (Math.random() > 0.5 ? 1 : -1);
-  puck.setLinearVelocity(planck.Vec2(PUCK_INITIAL_VX * direction, vyPxPerSec * SCALE));
+  puckBody.setLinvel(new RAPIER.Vector2(PUCK_INITIAL_VX * direction, vyPxPerSec * SCALE), true);
 };
 
 const syncStateFromBodies = (room) => {
-  const { leftPaddle, rightPaddle, puck } = room.physics;
-  const puckVel = puck.getLinearVelocity();
-  const leftPos = leftPaddle.getPosition();
-  const rightPos = rightPaddle.getPosition();
-  const puckPos = puck.getPosition();
+  const { leftBody, rightBody, puckBody } = room.physics;
+  const puckVel = puckBody.linvel();
+  const leftPos = leftBody.translation();
+  const rightPos = rightBody.translation();
+  const puckPos = puckBody.translation();
 
   room.state.left.x = toPixel(leftPos.x);
   room.state.left.y = toPixel(leftPos.y);
@@ -253,41 +257,52 @@ const syncStateFromBodies = (room) => {
   room.state.puck.vy = toPixel(puckVel.y);
 };
 
+const consumeCollisionEvents = (room) => {
+  const { world, eventQueue } = room.physics;
+  const { events } = room;
+
+  eventQueue.drainCollisionEvents((handleA, handleB, started) => {
+    if (!started) return;
+    const colliderA = world.getCollider(handleA);
+    const colliderB = world.getCollider(handleB);
+    const typeA = colliderA?.userData?.type;
+    const typeB = colliderB?.userData?.type;
+    if ((typeA === "puck" && typeB === "paddle") || (typeA === "paddle" && typeB === "puck")) {
+      events.paddle = true;
+    }
+    if ((typeA === "puck" && typeB === "wall") || (typeA === "wall" && typeB === "puck")) {
+      events.wall = true;
+    }
+  });
+};
+
 const stepRoom = (room) => {
   const { state, events } = room;
-  const { world, leftPaddle, rightPaddle, puck } = room.physics;
+  const { world, leftBody, rightBody, puckBody } = room.physics;
 
   events.wall = false;
   events.paddle = false;
   events.goal = false;
 
   if (!state.running) {
-    leftPaddle.setLinearVelocity(planck.Vec2(0, 0));
-    rightPaddle.setLinearVelocity(planck.Vec2(0, 0));
     syncStateFromBodies(room);
     return { state, events };
   }
 
-  applyPaddleVelocity(leftPaddle, room.inputs.left);
-  applyPaddleVelocity(rightPaddle, room.inputs.right);
+  applyPaddleInput(leftBody, room.inputs.left, "left");
+  applyPaddleInput(rightBody, room.inputs.right, "right");
 
-  for (let i = 0; i < SUB_STEPS; i += 1) {
-    world.step(FIXED_DT / SUB_STEPS, 12, 8);
-  }
+  world.step();
+  consumeCollisionEvents(room);
 
-  clampPaddlePosition(leftPaddle, "left");
-  clampPaddlePosition(rightPaddle, "right");
-
-  // 퍽 속도 제한
-  const puckVel = puck.getLinearVelocity();
+  const puckVel = puckBody.linvel();
   const speed = Math.hypot(puckVel.x, puckVel.y);
   if (speed > MAX_PUCK_SPEED) {
     const scale = MAX_PUCK_SPEED / speed;
-    puck.setLinearVelocity(planck.Vec2(puckVel.x * scale, puckVel.y * scale));
+    puckBody.setLinvel(new RAPIER.Vector2(puckVel.x * scale, puckVel.y * scale), true);
   }
 
-  // 득점 체크
-  const puckPos = puck.getPosition();
+  const puckPos = puckBody.translation();
   const goalTop = toWorld(ARENA.height / 2 - GOAL_HEIGHT / 2);
   const goalBottom = toWorld(ARENA.height / 2 + GOAL_HEIGHT / 2);
   const minX = toWorld(WALL);
@@ -341,7 +356,7 @@ const ensureRoomLoop = (room) => {
 };
 
 // WebSocket 연결 처리
-wss.on("connection", (ws) => {
+const attachSocketHandlers = (ws) => {
   const id = nextId++;
   ws.id = id;
 
@@ -419,7 +434,6 @@ wss.on("connection", (ws) => {
         room.state = createState();
         resetRound(room, 1);
       }
-      return;
     }
   });
 
@@ -445,8 +459,14 @@ wss.on("connection", (ws) => {
       rooms.delete(roomCode);
     }
   });
-});
+};
 
-server.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
-});
+const startServer = async () => {
+  await RAPIER.init();
+  wss.on("connection", attachSocketHandlers);
+  server.listen(port, () => {
+    console.log(`Server running on http://localhost:${port}`);
+  });
+};
+
+startServer();

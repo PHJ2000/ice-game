@@ -7,7 +7,7 @@
     "start": "node server.js"
   },
   "dependencies": {
-    "planck-js": "^0.3.0",
+    "@dimforge/rapier2d-compat": "^0.19.3",
     "ws": "^8.18.0"
   }
 }
