@@ -252,12 +252,20 @@ const applyPaddleTarget = (body, target, side, dt) => {
 };
 
 const resetRound = (room, direction) => {
-  const { leftBody, rightBody, puckBody } = room.physics;
+  const { leftBody, rightBody } = room.physics;
 
   leftBody.setTranslation(new RAPIER.Vector2(toWorld(140), toWorld(260)), true);
   rightBody.setTranslation(new RAPIER.Vector2(toWorld(760), toWorld(260)), true);
-  puckBody.setTranslation(new RAPIER.Vector2(toWorld(450), toWorld(260)), true);
+  resetPuck(room, direction, false);
+};
 
+const resetPuck = (room, direction, freeze) => {
+  const { puckBody } = room.physics;
+  puckBody.setTranslation(new RAPIER.Vector2(toWorld(450), toWorld(260)), true);
+  if (freeze) {
+    puckBody.setLinvel(new RAPIER.Vector2(0, 0), true);
+    return;
+  }
   const vyPxPerSec = (Math.random() * 2.8 + 2.2) * TICK_RATE * (Math.random() > 0.5 ? 1 : -1);
   puckBody.setLinvel(new RAPIER.Vector2(PUCK_INITIAL_VX * direction, vyPxPerSec * SCALE), true);
 };
@@ -344,6 +352,8 @@ class GameRoom extends Room {
       right: { up: false, down: false, left: false, right: false },
     };
     this.targets = { left: null, right: null };
+    this.pendingResetAt = null;
+    this.pendingDirection = 1;
     this.physics = createPhysicsWorld();
     this.lastCollisionLogAt = 0;
 
@@ -465,12 +475,21 @@ class GameRoom extends Room {
   update() {
     const { state } = this;
     const { world, eventQueue, leftBody, rightBody, puckBody } = this.physics;
+    const now = Date.now();
 
-    if (state.running) {
-      const events = { wall: false, paddle: false, goal: false };
-      const subDt = FIXED_DT / SUBSTEPS;
-      let goalScored = false;
+    if (this.pendingResetAt && now >= this.pendingResetAt) {
+      this.pendingResetAt = null;
+      state.running = true;
+      state.status = "경기 진행 중!";
+      resetPuck(this, this.pendingDirection, false);
+    }
 
+    const events = { wall: false, paddle: false, goal: false };
+    const subDt = FIXED_DT / SUBSTEPS;
+    let goalScored = false;
+    const paused = Boolean(this.pendingResetAt);
+
+    if (state.running || paused) {
       for (let i = 0; i < SUBSTEPS; i += 1) {
         const leftMoved = applyPaddleTarget(leftBody, this.targets.left, "left", subDt);
         const rightMoved = applyPaddleTarget(rightBody, this.targets.right, "right", subDt);
@@ -483,6 +502,11 @@ class GameRoom extends Room {
 
         world.timestep = subDt;
         world.step(eventQueue);
+        if (paused) {
+          resetPuck(this, 1, true);
+          continue;
+        }
+
         const stepEvents = consumeCollisionEvents(this);
         events.wall = events.wall || stepEvents.wall;
         events.paddle = events.paddle || stepEvents.paddle;
@@ -514,16 +538,20 @@ class GameRoom extends Room {
 
         if (leftInGoal) {
           state.scoreRight += 1;
-          state.status = "플레이어 2 득점!";
-          resetRound(this, 1);
+          state.status = "플레이어 2 득점! 3초 후 재개";
+          this.pendingResetAt = Date.now() + 3000;
+          this.pendingDirection = 1;
+          resetPuck(this, 1, true);
           events.goal = true;
           goalScored = true;
         }
 
         if (rightInGoal) {
           state.scoreLeft += 1;
-          state.status = "플레이어 1 득점!";
-          resetRound(this, -1);
+          state.status = "플레이어 1 득점! 3초 후 재개";
+          this.pendingResetAt = Date.now() + 3000;
+          this.pendingDirection = -1;
+          resetPuck(this, -1, true);
           events.goal = true;
           goalScored = true;
         }
@@ -535,6 +563,7 @@ class GameRoom extends Room {
 
       if (state.scoreLeft >= SCORE_TO_WIN || state.scoreRight >= SCORE_TO_WIN) {
         state.running = false;
+        this.pendingResetAt = null;
         state.status = state.scoreLeft > state.scoreRight ? "플레이어 1 승리!" : "플레이어 2 승리!";
       }
 
