@@ -235,12 +235,7 @@ const applyPaddleTarget = (body, target, side, dt) => {
   }
   const distFromGoal = side === "left" ? current.x - minX : maxX - current.x;
   const ratio = Math.min(1, Math.max(0, distFromGoal / maxDist));
-  let zoneMultiplier = 0.8;
-  if (ratio <= 1 / 3) {
-    zoneMultiplier = 1.2;
-  } else if (ratio <= 2 / 3) {
-    zoneMultiplier = 1.0;
-  }
+  const zoneMultiplier = 1.2 - 0.4 * ratio;
   const maxStep = PADDLE_SPEED * dt * zoneMultiplier;
   const step = Math.min(maxStep, dist);
   const scale = step / dist;
