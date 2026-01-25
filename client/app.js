@@ -139,10 +139,12 @@ window.Game = window.Game || {};
     scoreRightEl.textContent = snapshot.scores.right.toString();
     statusText.textContent = snapshot.status;
     if (playerLeftNameEl) {
-      playerLeftNameEl.textContent = leftPlayer.name || "플레이어 1";
+      const leftName = leftPlayer && leftPlayer.name ? leftPlayer.name : "플레이어 1";
+      playerLeftNameEl.textContent = leftName;
     }
     if (playerRightNameEl) {
-      playerRightNameEl.textContent = rightPlayer.name || "플레이어 2";
+      const rightName = rightPlayer && rightPlayer.name ? rightPlayer.name : "플레이어 2";
+      playerRightNameEl.textContent = rightName;
     }
     if (timeValueEl) {
       timeValueEl.textContent = state.overtime ? "연장" : formatTime(state.timeLeftMs);
