@@ -103,18 +103,39 @@ window.Game.Audio = (() => {
     cheer.p_freq_ramp = -0.1;
     cheer.sound_vol = 0.28;
 
-    sfx.paddle = window.sfxr.toAudio(paddle);
-    sfx.wall = window.sfxr.toAudio(wall);
-    sfx.goal = window.sfxr.toAudio(goal);
-    sfx.cheer = window.sfxr.toAudio(cheer);
+    const makeSfx = (params, volume) => {
+      const audio = window.sfxr.toAudio(params);
+      if (!audio) return null;
+      if (typeof audio.setVolume === "function") {
+        audio.setVolume(volume);
+        audio._volume = volume;
+      } else {
+        audio.volume = volume;
+      }
+      return audio;
+    };
+
+    sfx.paddle = makeSfx(paddle, 0.7);
+    sfx.wall = makeSfx(wall, 0.6);
+    sfx.goal = makeSfx(goal, 0.75);
+    sfx.cheer = makeSfx(cheer, 0.75);
     sfxReady = true;
   };
 
   const playSfx = (audio) => {
     if (!audio || muted) return;
-    const node = audio.cloneNode();
-    node.volume = audio.volume;
-    node.play().catch(() => {});
+    if (typeof audio.cloneNode === "function") {
+      const node = audio.cloneNode();
+      node.volume = typeof audio.volume === "number" ? audio.volume : 1;
+      node.play().catch(() => {});
+      return;
+    }
+    if (typeof audio.setVolume === "function") {
+      audio.setVolume(typeof audio._volume === "number" ? audio._volume : 1);
+    }
+    if (typeof audio.play === "function") {
+      audio.play();
+    }
   };
 
   const setMuted = (value) => {
