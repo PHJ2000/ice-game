@@ -17,6 +17,11 @@ window.Game = window.Game || {};
   const debugText = document.getElementById("debugText");
   const rulesText = document.getElementById("rulesText");
   const muteBtn = document.getElementById("muteBtn");
+  const nameInput = document.getElementById("nameInput");
+  const nameBtn = document.getElementById("nameBtn");
+  const playerLeftNameEl = document.getElementById("playerLeftName");
+  const playerRightNameEl = document.getElementById("playerRightName");
+  const timeValueEl = document.getElementById("timeValue");
 
   const config = await Config.load();
   const {
@@ -75,6 +80,14 @@ window.Game = window.Game || {};
   let hitFlashUntil = 0;
   let lastInputSentAt = performance.now();
 
+  const formatTime = (ms) => {
+    if (ms === null || ms === undefined) return "--:--";
+    const total = Math.max(0, Math.ceil(ms / 1000));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  };
+
   const BOUNDS = {
     minX: WALL,
     maxX: ARENA.width - WALL,
@@ -97,15 +110,15 @@ window.Game = window.Game || {};
     if (!state) return;
     const leftPlayer = state.leftId ? state.players.get(state.leftId) : null;
     const rightPlayer = state.rightId ? state.players.get(state.rightId) : null;
-    if (!leftPlayer || !rightPlayer || !state.puck) return;
+    if (!state.puck) return;
 
     const snapshot = {
       time: state.time || Date.now(),
       running: state.running,
       status: state.status,
       scores: { left: state.scoreLeft, right: state.scoreRight },
-      left: { x: leftPlayer.x, y: leftPlayer.y, r: leftPlayer.r },
-      right: { x: rightPlayer.x, y: rightPlayer.y, r: rightPlayer.r },
+      left: leftPlayer ? { x: leftPlayer.x, y: leftPlayer.y, r: leftPlayer.r } : renderState.left,
+      right: rightPlayer ? { x: rightPlayer.x, y: rightPlayer.y, r: rightPlayer.r } : renderState.right,
       puck: {
         x: state.puck.x,
         y: state.puck.y,
@@ -125,6 +138,15 @@ window.Game = window.Game || {};
     scoreLeftEl.textContent = snapshot.scores.left.toString();
     scoreRightEl.textContent = snapshot.scores.right.toString();
     statusText.textContent = snapshot.status;
+    if (playerLeftNameEl) {
+      playerLeftNameEl.textContent = leftPlayer.name || "플레이어 1";
+    }
+    if (playerRightNameEl) {
+      playerRightNameEl.textContent = rightPlayer.name || "플레이어 2";
+    }
+    if (timeValueEl) {
+      timeValueEl.textContent = state.overtime ? "연장" : formatTime(state.timeLeftMs);
+    }
   };
 
   const network = Network.create({
@@ -298,6 +320,17 @@ window.Game = window.Game || {};
   createBtn.addEventListener("click", () => joinRoom(createRoomCode()));
   joinBtn.addEventListener("click", () => joinRoom(roomInput.value));
   copyLinkBtn.addEventListener("click", copyShareLink);
+  if (nameBtn) {
+    nameBtn.addEventListener("click", () => {
+      const value = (nameInput?.value || "").trim();
+      if (!value) {
+        statusText.textContent = "이름을 입력해 주세요.";
+        return;
+      }
+      network.send("name", { name: value });
+      statusText.textContent = "이름을 변경했어요.";
+    });
+  }
   canvas.addEventListener("click", Audio.initAudio);
   document.addEventListener("pointerdown", Audio.initAudio);
 

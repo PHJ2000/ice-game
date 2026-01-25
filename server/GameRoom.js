@@ -15,6 +15,8 @@ const TICK_RATE = 60;
 const FIXED_DT = 1 / TICK_RATE;
 const SUBSTEPS = 2;
 const DEBUG_COLLISION = process.env.DEBUG_COLLISION === "1";
+const MATCH_TIME_MS = 3 * 60 * 1000;
+const OVERTIME_SPEED_MULTIPLIER = 1.3;
 
 const PADDLE_RADIUS = CONFIG.PADDLE_RADIUS;
 const PADDLE_SPEED_PX_PER_FRAME = CONFIG.PADDLE_SPEED_PX_PER_FRAME;
@@ -46,6 +48,7 @@ class Player extends Schema {
     this.y = 0;
     this.r = PADDLE_RADIUS;
     this.side = "";
+    this.name = "";
   }
 }
 
@@ -54,6 +57,7 @@ defineTypes(Player, {
   y: "number",
   r: "number",
   side: "string",
+  name: "string",
 });
 
 class Puck extends Schema {
@@ -87,6 +91,8 @@ class GameState extends Schema {
     this.time = Date.now();
     this.leftId = "";
     this.rightId = "";
+    this.timeLeftMs = MATCH_TIME_MS;
+    this.overtime = false;
   }
 }
 
@@ -100,6 +106,8 @@ defineTypes(GameState, {
   time: "number",
   leftId: "string",
   rightId: "string",
+  timeLeftMs: "number",
+  overtime: "boolean",
 });
 
 const buildWalls = (world) => {
@@ -274,13 +282,17 @@ const resetRound = (room, direction) => {
 
 const resetPuck = (room, direction, freeze) => {
   const { puckBody } = room.physics;
+  const speedMultiplier = room.state.overtime ? OVERTIME_SPEED_MULTIPLIER : 1;
   puckBody.setTranslation(new RAPIER.Vector2(toWorld(450), toWorld(260)), true);
   if (freeze) {
     puckBody.setLinvel(new RAPIER.Vector2(0, 0), true);
     return;
   }
   const vyPxPerSec = (Math.random() * 2.8 + 2.2) * TICK_RATE * (Math.random() > 0.5 ? 1 : -1);
-  puckBody.setLinvel(new RAPIER.Vector2(PUCK_INITIAL_VX * direction, vyPxPerSec * SCALE), true);
+  puckBody.setLinvel(
+    new RAPIER.Vector2(PUCK_INITIAL_VX * direction * speedMultiplier, vyPxPerSec * SCALE * speedMultiplier),
+    true
+  );
 };
 
 const syncStateFromBodies = (room) => {
@@ -367,6 +379,9 @@ class GameRoom extends Room {
     this.targets = { left: null, right: null };
     this.pendingResetAt = null;
     this.pendingDirection = 1;
+    this.elapsedMs = 0;
+    this.lastTickAt = Date.now();
+    this.matchStarted = false;
     this.physics = createPhysicsWorld();
     this.lastCollisionLogAt = 0;
 
@@ -402,6 +417,12 @@ class GameRoom extends Room {
           const dir = Math.random() > 0.5 ? 1 : -1;
           resetRound(this, dir);
           this.state.status = "경기 진행 중!";
+          if (!this.matchStarted) {
+            this.matchStarted = true;
+            this.elapsedMs = 0;
+            this.state.timeLeftMs = MATCH_TIME_MS;
+            this.state.overtime = false;
+          }
         } else {
           this.state.status = "일시정지";
         }
@@ -411,8 +432,21 @@ class GameRoom extends Room {
         this.state.scoreRight = 0;
         this.state.running = false;
         this.state.status = "스페이스를 누르면 시작!";
+        this.state.timeLeftMs = MATCH_TIME_MS;
+        this.state.overtime = false;
+        this.elapsedMs = 0;
+        this.matchStarted = false;
+        this.pendingResetAt = null;
         resetRound(this, 1);
       }
+    });
+
+    this.onMessage("name", (client, message) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !message || typeof message.name !== "string") return;
+      const trimmed = message.name.trim().slice(0, 12);
+      if (!trimmed) return;
+      player.name = trimmed;
     });
 
     this.onMessage("ping", (client, message) => {
@@ -452,6 +486,7 @@ class GameRoom extends Room {
     player.x = side === "left" ? 140 : 760;
     player.y = 260;
     player.r = PADDLE_RADIUS;
+    player.name = side === "left" ? "플레이어 1" : "플레이어 2";
     this.state.players.set(client.sessionId, player);
 
     const role = side === "left" ? "host" : "guest";
@@ -489,6 +524,8 @@ class GameRoom extends Room {
     const { state } = this;
     const { world, eventQueue, leftBody, rightBody, puckBody } = this.physics;
     const now = Date.now();
+    const tickDelta = now - this.lastTickAt;
+    this.lastTickAt = now;
 
     if (this.pendingResetAt && now >= this.pendingResetAt) {
       this.pendingResetAt = null;
@@ -501,8 +538,23 @@ class GameRoom extends Room {
     const subDt = FIXED_DT / SUBSTEPS;
     let goalScored = false;
     const paused = Boolean(this.pendingResetAt);
+    const matchActive = state.running && !paused && !state.overtime && state.timeLeftMs > 0;
 
-    if (state.running || paused) {
+    if (matchActive) {
+      this.elapsedMs += tickDelta;
+      state.timeLeftMs = Math.max(0, MATCH_TIME_MS - this.elapsedMs);
+      if (state.timeLeftMs === 0) {
+        if (state.scoreLeft !== state.scoreRight) {
+          state.running = false;
+          state.status = state.scoreLeft > state.scoreRight ? "플레이어 1 승리!" : "플레이어 2 승리!";
+        } else {
+          state.overtime = true;
+          state.status = "연장전! 다음 득점 승리";
+        }
+      }
+    }
+
+    if (state.running || paused || state.overtime) {
       for (let i = 0; i < SUBSTEPS; i += 1) {
         const leftMoved = applyPaddleTarget(leftBody, this.targets.left, "left", subDt);
         const rightMoved = applyPaddleTarget(rightBody, this.targets.right, "right", subDt);
@@ -515,7 +567,7 @@ class GameRoom extends Room {
 
         world.timestep = subDt;
         world.step(eventQueue);
-        if (paused) {
+        if (paused || !state.running) {
           resetPuck(this, 1, true);
           continue;
         }
@@ -526,8 +578,9 @@ class GameRoom extends Room {
 
         const puckVel = puckBody.linvel();
         const speed = Math.hypot(puckVel.x, puckVel.y);
-        if (speed > MAX_PUCK_SPEED) {
-          const scale = MAX_PUCK_SPEED / speed;
+        const maxSpeed = MAX_PUCK_SPEED * (state.overtime ? OVERTIME_SPEED_MULTIPLIER : 1);
+        if (speed > maxSpeed) {
+          const scale = maxSpeed / speed;
           puckBody.setLinvel(new RAPIER.Vector2(puckVel.x * scale, puckVel.y * scale), true);
         }
 
@@ -537,6 +590,9 @@ class GameRoom extends Room {
         const minX = toWorld(WALL);
         const maxX = toWorld(ARENA.width - WALL);
         const goalDepth = toWorld(Math.min(GOAL_DEPTH, WALL));
+        const outMargin = PUCK_RADIUS * 2;
+        const minY = toWorld(WALL);
+        const maxY = toWorld(ARENA.height - WALL);
 
         const leftInGoal =
           puckPos.y > goalTop &&
@@ -549,12 +605,25 @@ class GameRoom extends Room {
           puckPos.x - PUCK_RADIUS >= maxX &&
           puckPos.x + PUCK_RADIUS <= maxX + goalDepth;
 
+        const outOfBounds =
+          puckPos.x < minX - outMargin ||
+          puckPos.x > maxX + outMargin ||
+          puckPos.y < minY - outMargin ||
+          puckPos.y > maxY + outMargin;
+
         if (leftInGoal) {
           state.scoreRight += 1;
-          state.status = "플레이어 2 득점! 3초 후 재개";
-          this.pendingResetAt = Date.now() + 1500;
-          this.pendingDirection = 1;
-          resetPuck(this, 1, true);
+          if (state.overtime) {
+            state.running = false;
+            state.overtime = false;
+            this.pendingResetAt = null;
+            state.status = "플레이어 2 승리!";
+          } else {
+            state.status = "플레이어 2 득점! 1.5초 후 재개";
+            this.pendingResetAt = Date.now() + 1500;
+            this.pendingDirection = 1;
+            resetPuck(this, 1, true);
+          }
           events.goal = true;
           events.scorer = "right";
           goalScored = true;
@@ -562,12 +631,27 @@ class GameRoom extends Room {
 
         if (rightInGoal) {
           state.scoreLeft += 1;
-          state.status = "플레이어 1 득점! 3초 후 재개";
-          this.pendingResetAt = Date.now() + 1500;
-          this.pendingDirection = -1;
-          resetPuck(this, -1, true);
+          if (state.overtime) {
+            state.running = false;
+            state.overtime = false;
+            this.pendingResetAt = null;
+            state.status = "플레이어 1 승리!";
+          } else {
+            state.status = "플레이어 1 득점! 1.5초 후 재개";
+            this.pendingResetAt = Date.now() + 1500;
+            this.pendingDirection = -1;
+            resetPuck(this, -1, true);
+          }
           events.goal = true;
           events.scorer = "left";
+          goalScored = true;
+        }
+
+        if (!goalScored && outOfBounds) {
+          state.status = "공이 코트 밖으로 나갔어요! 1.5초 후 재개";
+          this.pendingResetAt = Date.now() + 1500;
+          this.pendingDirection = Math.random() > 0.5 ? 1 : -1;
+          resetPuck(this, this.pendingDirection, true);
           goalScored = true;
         }
 
@@ -576,7 +660,7 @@ class GameRoom extends Room {
         }
       }
 
-      if (state.scoreLeft >= SCORE_TO_WIN || state.scoreRight >= SCORE_TO_WIN) {
+      if (!state.overtime && (state.scoreLeft >= SCORE_TO_WIN || state.scoreRight >= SCORE_TO_WIN)) {
         state.running = false;
         this.pendingResetAt = null;
         state.status = state.scoreLeft > state.scoreRight ? "플레이어 1 승리!" : "플레이어 2 승리!";
